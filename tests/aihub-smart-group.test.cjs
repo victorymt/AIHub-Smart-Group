@@ -18,12 +18,21 @@ test('stacks narrow-screen panel sections without unbounding the candidate list'
   assert.notEqual(styleEnd, -1);
 
   const mobileStyles = userscriptSource.slice(mediaStart, styleEnd);
-  assert.match(mobileStyles, /#\$\{ROOT_ID\}\{width:min\(360px,calc\(100vw - 32px\)\)\}/);
+  assert.match(mobileStyles, /#\$\{ROOT_ID\},#\$\{ROOT_ID\}\[data-side-open=true\]\{width:min\(360px,calc\(100vw - 32px\)\)\}/);
   assert.match(mobileStyles, /\.asg-body\{\s*display:flex;\s*flex-direction:column;\s*overflow:auto;/);
   assert.match(mobileStyles, /\.asg-main-column,\s*#\$\{ROOT_ID\} \.asg-side-column\{\s*flex:0 0 auto;\s*min-height:auto;\s*overflow:visible;/);
-  assert.match(mobileStyles, /\.asg-side-tabs\{\s*position:static;\s*top:auto;\s*z-index:auto;/);
+  assert.match(mobileStyles, /\.asg-side-head\{\s*position:static;\s*top:auto;\s*z-index:auto;/);
   assert.doesNotMatch(mobileStyles, /\.asg-body\{[^}]*grid-template-columns/);
   assert.doesNotMatch(mobileStyles, /\.asg-list\{max-height:none\}/);
+});
+
+test('keeps the desktop side panel collapsed until a header tab opens it', () => {
+  assert.match(userscriptSource, /width:min\(480px,calc\(100vw - 32px\)\)/);
+  assert.match(userscriptSource, /\[data-side-open=true\]\{width:min\(820px,calc\(100vw - 32px\)\)\}/);
+  assert.match(userscriptSource, /<aside class="asg-side-column"[^>]* hidden>/);
+  assert.match(userscriptSource, /data-panel-tab="settings">设置<\/button>/);
+  assert.match(userscriptSource, /data-panel-tab="logs">日志<\/button>/);
+  assert.match(userscriptSource, /data-action="close-side"/);
 });
 
 test('wires the native key group dropdown enhancer through the app router', () => {
@@ -303,6 +312,13 @@ test('normalizes the side panel tab to settings or logs', () => {
   assert.equal(core.normalizePanelTab('logs'), 'logs');
   assert.equal(core.normalizePanelTab('unknown'), 'settings');
   assert.equal(core.normalizePanelTab(), 'settings');
+});
+
+test('toggles the requested side panel tab without closing when switching tabs', () => {
+  assert.deepEqual(core.toggleSidePanelState(false, 'settings', 'settings'), { open: true, tab: 'settings' });
+  assert.deepEqual(core.toggleSidePanelState(true, 'settings', 'settings'), { open: false, tab: 'settings' });
+  assert.deepEqual(core.toggleSidePanelState(true, 'settings', 'logs'), { open: true, tab: 'logs' });
+  assert.deepEqual(core.toggleSidePanelState(false, 'logs', 'unknown'), { open: true, tab: 'settings' });
 });
 
 test('ignores groups above the absolute balance price limit', () => {
