@@ -32,6 +32,38 @@ test('wires the native key group dropdown enhancer through the app router', () =
   assert.match(userscriptSource, /input\[placeholder="搜索分组\.\.\."\]/);
 });
 
+test('renders the full candidate ranking as a labeled ordered list', () => {
+  assert.match(userscriptSource, /<span class="asg-ranking-title"[^>]*>推荐排序<\/span>/);
+  assert.match(userscriptSource, /<ol class="asg-list" data-field="list"><\/ol>/);
+  assert.doesNotMatch(userscriptSource, /this\.ranked\.slice\(0,\s*5\)/);
+  assert.match(userscriptSource, /locate\.dataset\.action = 'locate-provider'/);
+});
+
+test('finds a provider row by its complete normalized group name', () => {
+  const rows = [
+    { querySelector: () => ({ textContent: 'A001-Plus' }) },
+    { querySelector: () => ({ textContent: ' A008-BugTeam ' }) },
+  ];
+  const root = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '.monitor-api-row:not(.monitor-api-head)');
+      return rows;
+    },
+  };
+
+  assert.equal(core.findProviderGroupRow(root, 'a008-bugteam'), rows[1]);
+  assert.equal(core.findProviderGroupRow(root, 'A008'), null);
+  assert.equal(core.findProviderGroupRow(null, 'A008-BugTeam'), null);
+});
+
+test('accepts only unexpired provider location targets', () => {
+  const valid = JSON.stringify({ name: 'A008-BugTeam', expiresAt: 31_000 });
+  assert.deepEqual(core.parsePendingProviderLocation(valid, 1_000), { name: 'A008-BugTeam', expiresAt: 31_000 });
+  assert.equal(core.parsePendingProviderLocation(valid, 31_001), null);
+  assert.equal(core.parsePendingProviderLocation('{invalid', 1_000), null);
+  assert.equal(core.parsePendingProviderLocation(JSON.stringify({ name: '', expiresAt: 31_000 }), 1_000), null);
+});
+
 test('maps dropdown monitor tones to native group badge classes', () => {
   assert.equal(core.getGroupDropdownToneClass('available'), 'asg-key-group-badge-available');
   assert.equal(core.getGroupDropdownToneClass('warning'), 'asg-key-group-badge-warning');
@@ -203,6 +235,42 @@ test('computes availability from valid monitor samples in the latest 10 minutes'
   assert.equal(enriched[1].recentSampleCount, 0);
 });
 
+test('builds a six-hour availability timeline for the recommended group', () => {
+  const generatedAt = Date.parse('2026-07-31T06:00:00Z');
+  const model = core.buildAvailabilityChartModel({
+    generatedAt: '2026-07-31T06:00:00Z',
+    seriesByApiId: {
+      48: [
+        [Date.parse('2026-07-30T23:59:00Z'), 1],
+        [Date.parse('2026-07-31T00:00:00Z'), 0],
+        [Date.parse('2026-07-31T03:00:00Z'), 1],
+        [Date.parse('2026-07-31T06:00:00Z'), 1],
+        [Date.parse('2026-07-31T06:01:00Z'), 0],
+        [generatedAt - 1_000, null],
+      ],
+    },
+  }, 48);
+
+  assert.equal(model.startAt, Date.parse('2026-07-31T00:00:00Z'));
+  assert.equal(model.endAt, generatedAt);
+  assert.equal(model.total, 3);
+  assert.equal(model.successCount, 2);
+  assert.equal(model.successRate, 2 / 3);
+  assert.deepEqual(model.points.map((point) => point.available), [false, true, true]);
+  assert.equal(model.points[0].x, 4);
+  assert.equal(model.points[2].x, 316);
+  assert.match(model.path, /^M4\.0,31\.0 H160\.0 V9\.0 H316\.0$/);
+});
+
+test('returns an empty availability timeline when the group has no valid samples', () => {
+  const model = core.buildAvailabilityChartModel({ generatedAt: '2026-07-31T06:00:00Z', seriesByApiId: { 48: [[1, 'unknown']] } }, 48);
+
+  assert.equal(model.total, 0);
+  assert.equal(model.successCount, 0);
+  assert.equal(model.path, '');
+  assert.equal(Number.isNaN(model.successRate), true);
+});
+
 test('selects AIHub candidates for price, balance, and speed modes', () => {
   const rows = [
     { planType: 'cheap', group_id: 1, priceMultiplier: 0.04, available: true, successRates: { '10m': 1, '24h': 1 }, firstTokenLatencyMs: 500, warningReasons: [] },
@@ -213,6 +281,12 @@ test('selects AIHub candidates for price, balance, and speed modes', () => {
   assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, mode: 'price' })[0].planType, 'cheap');
   assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, mode: 'balance', balanceMaxPrice: 0.05 })[0].planType, 'balanced');
   assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, mode: 'speed' })[0].planType, 'fast');
+});
+
+test('describes the active candidate ranking rule', () => {
+  assert.equal(core.getCandidateRankingRule({ mode: 'price' }), '倍率从低到高');
+  assert.equal(core.getCandidateRankingRule({ mode: 'speed' }), '首 Token 从快到慢');
+  assert.equal(core.getCandidateRankingRule({ mode: 'balance', balanceMaxPrice: 0.1 }), '倍率 ≤ ×0.1 · 首 Token 从快到慢');
 });
 
 test('normalizes adjustable AIHub mode settings', () => {

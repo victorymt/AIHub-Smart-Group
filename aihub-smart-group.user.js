@@ -2,7 +2,7 @@
 // @name         AIHub Smart Group
 // @name:zh-CN   AIHub 智能分组
 // @namespace    local.aihub.smart-group
-// @version      0.5.8
+// @version      0.5.9
 // @description  Recommend reliable low-cost groups on AIHub.
 // @description:zh-CN 按价格、速度和可用性推荐 AIHub 分组
 // @license      MIT
@@ -28,8 +28,11 @@
 
   const ROOT_ID = 'aihub-smart-group-panel';
   const TOGGLE_ID = 'aihub-smart-group-toggle';
-  const SCRIPT_VERSION = '0.5.8';
+  const SCRIPT_VERSION = '0.5.9';
   const STORAGE_PREFIX = 'aihub-smart-group:';
+  const PENDING_PROVIDER_GROUP_KEY = `${STORAGE_PREFIX}pending-provider-group`;
+  const AVAILABILITY_CHART_RANGE_MS = 6 * 60 * 60 * 1000;
+  const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
   const GROUP_MODE_LABELS = Object.freeze({
     price: '价格',
     balance: '平衡',
@@ -209,6 +212,35 @@
     return candidates.sort(comparePrice);
   }
 
+  function getCandidateRankingRule(config = DEFAULT_CONFIG) {
+    const normalizedConfig = normalizeConfig(config);
+    if (normalizedConfig.mode === 'speed') return '首 Token 从快到慢';
+    if (normalizedConfig.mode === 'balance') return `倍率 ≤ ${formatMultiplier(normalizedConfig.balanceMaxPrice)} · 首 Token 从快到慢`;
+    return '倍率从低到高';
+  }
+
+  function findProviderGroupRow(root, groupName) {
+    if (!root || typeof root.querySelectorAll !== 'function') return null;
+    const targetName = normalizeGroupName(groupName);
+    if (!targetName) return null;
+    for (const row of root.querySelectorAll('.monitor-api-row:not(.monitor-api-head)')) {
+      const name = row.querySelector?.('.monitor-plan-cell')?.textContent;
+      if (normalizeGroupName(name) === targetName) return row;
+    }
+    return null;
+  }
+
+  function parsePendingProviderLocation(value, now = Date.now()) {
+    try {
+      const pending = JSON.parse(String(value || ''));
+      const name = String(pending?.name || '').trim();
+      const expiresAt = Number(pending?.expiresAt);
+      return name && Number.isFinite(expiresAt) && expiresAt >= now ? { name, expiresAt } : null;
+    } catch {
+      return null;
+    }
+  }
+
   function formatRelativeAge(ageMs) {
     if (!Number.isFinite(ageMs)) return '时间未知';
     const seconds = Math.max(0, Math.floor(ageMs / 1000));
@@ -284,6 +316,120 @@
         recentConsecutiveSuccessCount: trailingSuccesses,
       };
     });
+  }
+
+  function buildAvailabilityChartModel(seriesPayload, apiId) {
+    const width = 320;
+    const height = 40;
+    const left = 4;
+    const right = width - 4;
+    const availableY = 9;
+    const unavailableY = height - 9;
+    const source = seriesPayload?.seriesByApiId?.[apiId];
+    const samples = (Array.isArray(source) ? source : [])
+      .map((sample) => ({
+        at: Number(sample?.[0]),
+        available: sample?.[1] === 1 ? true : sample?.[1] === 0 ? false : null,
+      }))
+      .filter((sample) => Number.isFinite(sample.at) && sample.available !== null)
+      .sort((leftSample, rightSample) => leftSample.at - rightSample.at);
+    const generatedAt = Date.parse(seriesPayload?.generatedAt);
+    const latestSampleAt = samples.length ? samples[samples.length - 1].at : Number.NaN;
+    const endAt = Number.isFinite(generatedAt)
+      ? generatedAt
+      : (Number.isFinite(latestSampleAt) ? latestSampleAt : Date.now());
+    const startAt = endAt - AVAILABILITY_CHART_RANGE_MS;
+    const points = samples
+      .filter((sample) => sample.at >= startAt && sample.at <= endAt)
+      .map((sample) => ({
+        ...sample,
+        x: left + ((sample.at - startAt) / AVAILABILITY_CHART_RANGE_MS) * (right - left),
+        y: sample.available ? availableY : unavailableY,
+      }));
+    let path = '';
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index];
+      const x = point.x.toFixed(1);
+      const y = point.y.toFixed(1);
+      if (!path) {
+        path = `M${x},${y}`;
+        continue;
+      }
+      path += ` H${x}`;
+      const previous = points[index - 1];
+      if (previous?.y !== point.y) path += ` V${y}`;
+    }
+    const successCount = points.filter((point) => point.available).length;
+    return {
+      width,
+      height,
+      startAt,
+      endAt,
+      points,
+      path,
+      successCount,
+      total: points.length,
+      successRate: points.length ? successCount / points.length : Number.NaN,
+    };
+  }
+
+  function createSvgElement(name, attributes = {}) {
+    const element = document.createElementNS(SVG_NAMESPACE, name);
+    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+    return element;
+  }
+
+  function renderAvailabilityChart(seriesPayload, apiId, groupName) {
+    const model = buildAvailabilityChartModel(seriesPayload, apiId);
+    const shell = document.createElement('div');
+    shell.className = 'asg-availability-chart';
+    const head = document.createElement('div');
+    head.className = 'asg-availability-head';
+    const title = document.createElement('span');
+    title.className = 'asg-availability-title';
+    title.textContent = '6h 可用性';
+    const summary = document.createElement('span');
+    summary.className = 'asg-availability-summary';
+    summary.textContent = model.total
+      ? `${model.successCount}/${model.total} 点 · ${formatPercent(model.successRate)}`
+      : '暂无数据';
+    head.append(title, summary);
+    shell.appendChild(head);
+    if (!model.total) return shell;
+
+    const svg = createSvgElement('svg', {
+      class: 'asg-availability-svg',
+      viewBox: `0 0 ${model.width} ${model.height}`,
+      role: 'img',
+      'aria-label': `${groupName} 近 6 小时可用性，成功 ${model.successCount}/${model.total} 次`,
+      preserveAspectRatio: 'none',
+    });
+    svg.append(
+      createSvgElement('line', { class: 'asg-availability-guide', x1: 4, x2: model.width - 4, y1: 9, y2: 9 }),
+      createSvgElement('line', { class: 'asg-availability-guide', x1: 4, x2: model.width - 4, y1: model.height - 9, y2: model.height - 9 }),
+      createSvgElement('path', { class: 'asg-availability-line', d: model.path }),
+    );
+    for (const point of model.points) {
+      const circle = createSvgElement('circle', {
+        class: `asg-availability-point ${point.available ? 'asg-availability-point-ok' : 'asg-availability-point-failed'}`,
+        cx: point.x.toFixed(1),
+        cy: point.y.toFixed(1),
+        r: 2.5,
+      });
+      const tooltip = createSvgElement('title');
+      tooltip.textContent = `${new Date(point.at).toLocaleString()} · ${point.available ? '可用' : '不可用'}`;
+      circle.appendChild(tooltip);
+      svg.appendChild(circle);
+    }
+    const axis = document.createElement('div');
+    axis.className = 'asg-availability-axis';
+    const start = document.createElement('span');
+    start.textContent = '6 小时前';
+    const end = document.createElement('span');
+    end.textContent = '现在';
+    axis.append(start, end);
+    shell.append(svg, axis);
+    return shell;
   }
 
   function normalizeGroupName(value) {
@@ -667,6 +813,16 @@
     #${ROOT_ID} .asg-recommend strong{font-size:15px}
     #${ROOT_ID} .asg-muted{color:#667085}
     #${ROOT_ID} .asg-metrics{display:flex;flex-wrap:wrap;gap:6px 12px;color:#475467;font-size:12px;margin-top:4px}
+    #${ROOT_ID} .asg-availability-chart{margin-top:8px;padding-top:7px;border-top:1px solid #dce6f7}
+    #${ROOT_ID} .asg-availability-head,#${ROOT_ID} .asg-availability-axis{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    #${ROOT_ID} .asg-availability-title{color:#344054;font-size:11px;font-weight:600}
+    #${ROOT_ID} .asg-availability-summary,#${ROOT_ID} .asg-availability-axis{color:#667085;font-size:10px}
+    #${ROOT_ID} .asg-availability-svg{display:block;width:100%;height:48px;margin-top:3px;overflow:visible}
+    #${ROOT_ID} .asg-availability-guide{stroke:#d0d5dd;stroke-width:1;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}
+    #${ROOT_ID} .asg-availability-line{fill:none;stroke:#667085;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+    #${ROOT_ID} .asg-availability-point{stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke}
+    #${ROOT_ID} .asg-availability-point-ok{fill:#12b76a}
+    #${ROOT_ID} .asg-availability-point-failed{fill:#f04438}
     #${ROOT_ID} .asg-recommend-meta{margin-top:5px;color:#667085;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
     #${ROOT_ID} .asg-monitor-age{margin-top:4px;color:#15803d;font-size:11px}
     #${ROOT_ID} .asg-monitor-age.asg-stale{color:#b42318;font-weight:600}
@@ -713,10 +869,31 @@
     #${ROOT_ID} .asg-logs{margin:6px 0 0;padding:0;list-style:none;border-top:1px solid #eef0f3}
     #${ROOT_ID} .asg-logs li{padding:5px 0;border-bottom:1px solid #eef0f3;font-size:11px;overflow-wrap:anywhere}
     #${ROOT_ID} .asg-logs .asg-log-error{color:#b42318}
-    #${ROOT_ID} .asg-list{margin:8px 0 0;padding:0;list-style:none;max-height:132px;overflow:auto;border-top:1px solid #eef0f3}
-    #${ROOT_ID} .asg-list li{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #eef0f3}
-    #${ROOT_ID} .asg-list li span:last-child{text-align:right;color:#475467;white-space:nowrap}
+    #${ROOT_ID} .asg-ranking{margin-top:9px;border-top:1px solid #e4e7ec}
+    #${ROOT_ID} .asg-ranking-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:7px 0 4px}
+    #${ROOT_ID} .asg-ranking-title{color:#344054;font-size:12px;font-weight:600}
+    #${ROOT_ID} .asg-ranking-rule{min-width:0;color:#667085;font-size:10px;text-align:right;overflow-wrap:anywhere}
+    #${ROOT_ID} .asg-list{margin:0;padding:0;list-style:none;max-height:176px;overflow:auto;border-top:1px solid #eef0f3}
+    #${ROOT_ID} .asg-list li{border-bottom:1px solid #eef0f3}
+    #${ROOT_ID} .asg-list li.asg-candidate-best{background:#f4f8ff}
+    #${ROOT_ID} .asg-candidate-locate{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:7px;width:100%;padding:7px 3px;border:0;border-radius:0;background:transparent;color:inherit;text-align:left}
+    #${ROOT_ID} .asg-candidate-locate:hover{background:#f8fafc!important}
+    #${ROOT_ID} .asg-candidate-best .asg-candidate-locate{background:#f4f8ff}
+    #${ROOT_ID} .asg-candidate-best .asg-candidate-locate:hover{background:#edf4ff!important}
+    #${ROOT_ID} .asg-candidate-locate:focus-visible{outline:2px solid #1456d9;outline-offset:-2px}
+    #${ROOT_ID} .asg-candidate-rank{color:#667085;font-size:11px;font-variant-numeric:tabular-nums}
+    #${ROOT_ID} .asg-candidate-main{min-width:0}
+    #${ROOT_ID} .asg-candidate-name-row{display:flex;align-items:center;gap:5px;min-width:0}
+    #${ROOT_ID} .asg-candidate-name{min-width:0;overflow:hidden;color:#344054;font-size:12px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
+    #${ROOT_ID} .asg-candidate-badge{flex:none;color:#1456d9;font-size:10px;font-weight:600;white-space:nowrap}
+    #${ROOT_ID} .asg-candidate-detail{margin-top:1px;overflow:hidden;color:#667085;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+    #${ROOT_ID} .asg-candidate-metrics{text-align:right;white-space:nowrap}
+    #${ROOT_ID} .asg-candidate-price{display:block;color:#15803d;font-size:12px;font-weight:700}
+    #${ROOT_ID} .asg-candidate-latency{display:block;margin-top:1px;color:#475467;font-size:10px}
+    #${ROOT_ID} .asg-candidate-empty{padding:7px 3px;color:#667085;text-align:center}
     #${ROOT_ID} .asg-error{color:#b42318;background:#fff4f2;border-color:#fecdca}
+    .monitor-api-row.asg-provider-locate-target{background:#eaf1ff!important;outline:2px solid #1456d9;outline-offset:-2px}
+    .dark .monitor-api-row.asg-provider-locate-target{background:rgba(20,86,217,.18)!important;outline-color:#60a5fa}
     #${TOGGLE_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:42px;height:42px;padding:0;border:1px solid #1456d9;border-radius:50%;background:#1456d9;color:#fff;box-shadow:0 8px 24px rgba(16,24,40,.2);font:600 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
     #${TOGGLE_ID}[hidden]{display:none}
     #${TOGGLE_ID}:hover{background:#0f46b6}
@@ -807,6 +984,7 @@
       this.stability = createStabilityState();
       this.rows = [];
       this.ranked = [];
+      this.monitorSeries = null;
       this.keys = [];
       this.loading = false;
       this.lastUpdated = null;
@@ -819,6 +997,7 @@
       this.sideTab = normalizePanelTab(storageGet('sideTab', 'settings'));
       this.timer = null;
       this.uiTimer = null;
+      this.providerLocateTimer = null;
       this.panel = null;
       this.toggleButton = null;
       this.active = false;
@@ -847,14 +1026,18 @@
       this.refresh();
       this.timer = window.setInterval(() => this.refresh(), this.config.pollIntervalSeconds * 1000);
       this.uiTimer = window.setInterval(() => this.renderTimeSensitiveState(), 1000);
+      this.resumePendingProviderLocation();
     }
 
     stop() {
       this.active = false;
       if (this.timer) window.clearInterval(this.timer);
       if (this.uiTimer) window.clearInterval(this.uiTimer);
+      if (this.providerLocateTimer) window.clearTimeout(this.providerLocateTimer);
       this.timer = null;
       this.uiTimer = null;
+      this.providerLocateTimer = null;
+      document.querySelector('.asg-provider-locate-target')?.classList.remove('asg-provider-locate-target');
       this.panel?.remove();
       this.toggleButton?.remove();
       this.panel = null;
@@ -884,7 +1067,7 @@
             <div class="asg-actions"><button data-action="refresh">检测</button><button data-action="switch" disabled>切换到推荐分组</button></div>
             <label class="asg-auto"><input type="checkbox" data-field="auto"> 自动切换（默认关闭）</label>
             <details class="asg-guide"><summary>快速开始</summary><ol><li>选择价格、平衡或速度模式。</li><li>选择目标密钥并点击“检测”。</li><li>确认推荐分组后点击切换；自动切换可在设置中开启。</li></ol></details>
-            <ul class="asg-list" data-field="list"></ul>
+            <section class="asg-ranking" aria-labelledby="asg-ranking-title"><div class="asg-ranking-head"><span class="asg-ranking-title" id="asg-ranking-title">推荐排序</span><span class="asg-ranking-rule" data-field="ranking-rule"></span></div><ol class="asg-list" data-field="list"></ol></section>
           </div>
           <aside class="asg-side-column" aria-label="设置与日志">
             <div class="asg-side-tabs" role="tablist" aria-label="面板工具">
@@ -953,6 +1136,10 @@
         if (action === 'switch') this.switchToRecommendation(false);
         if (action === 'save-settings') this.saveSettings();
         if (action === 'clear-logs') this.clearLogs();
+        if (action === 'locate-provider') {
+          const button = event.target.closest('[data-action="locate-provider"]');
+          this.navigateToProviderCandidate(button?.dataset.groupName);
+        }
       });
       this.panel.querySelector('[role="tablist"]').addEventListener('keydown', (event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -1210,6 +1397,7 @@
           this.log('info', '密钥读取已恢复');
         }
         this.lastAuthLogSignature = this.authError;
+        this.monitorSeries = series;
         this.rows = attachRecentAvailability(summary?.apis, series);
         this.monitorGeneratedAt = getLatestMonitorSampleAt(series) || series?.generatedAt || summary?.generatedAt || null;
         this.updateMonitorFreshness();
@@ -1391,7 +1579,7 @@
             ? `连续成功 ${winner.recentConsecutiveSuccessCount || 0} 点`
             : `可用率 ${formatPercent(winner.success10m)}`;
         metrics.textContent = `10m ${availabilityText} · ${winner.recentSampleCount}次探测 · 首Token ${formatLatency(winner.latency)}${this.stability.stable ? ' · 已稳定' : ` · ${this.stability.count}/${this.config.consecutiveChecks} 次`}`;
-        recommend.append(title, metrics);
+        recommend.append(title, metrics, renderAvailabilityChart(this.monitorSeries, winner.id, winner.name));
         if (this.config.mode === 'balance') {
           const reason = document.createElement('div');
           reason.className = 'asg-balance-reason';
@@ -1468,16 +1656,126 @@
 
     renderCandidates() {
       const list = this.panel.querySelector('[data-field="list"]');
+      const rule = this.panel.querySelector('[data-field="ranking-rule"]');
       list.replaceChildren();
-      for (const candidate of this.ranked.slice(0, 5)) {
+      rule.textContent = `${getCandidateRankingRule(this.config)} · ${this.ranked.length} 个候选`;
+      if (!this.ranked.length) {
         const item = document.createElement('li');
+        item.className = 'asg-candidate-empty';
+        item.textContent = '暂无符合条件的候选分组';
+        list.appendChild(item);
+        return;
+      }
+      for (let index = 0; index < this.ranked.length; index += 1) {
+        const candidate = this.ranked[index];
+        const item = document.createElement('li');
+        if (index === 0) item.className = 'asg-candidate-best';
+        const locate = document.createElement('button');
+        locate.type = 'button';
+        locate.className = 'asg-candidate-locate';
+        locate.dataset.action = 'locate-provider';
+        locate.dataset.groupName = candidate.name;
+        locate.title = `在供应商大厅定位 ${candidate.name}`;
+        locate.setAttribute('aria-label', `在供应商大厅定位 ${candidate.name}`);
+        const rank = document.createElement('span');
+        rank.className = 'asg-candidate-rank';
+        rank.textContent = `#${index + 1}`;
+        const main = document.createElement('div');
+        main.className = 'asg-candidate-main';
+        const nameRow = document.createElement('div');
+        nameRow.className = 'asg-candidate-name-row';
         const name = document.createElement('span');
+        name.className = 'asg-candidate-name';
         name.textContent = candidate.name;
-        const metrics = document.createElement('span');
-        metrics.textContent = `${candidate.price}x · 10m ${formatPercent(candidate.success10m)}`;
-        item.append(name, metrics);
+        name.title = candidate.name;
+        nameRow.appendChild(name);
+        if (index === 0) {
+          const badge = document.createElement('span');
+          badge.className = 'asg-candidate-badge';
+          badge.textContent = '当前推荐';
+          nameRow.appendChild(badge);
+        }
+        const detail = document.createElement('div');
+        detail.className = 'asg-candidate-detail';
+        detail.textContent = this.config.availabilityMode === 'successes'
+          ? `10m 成功 ${candidate.recentSuccessCount || 0}/${candidate.recentSampleCount || 0} 点`
+          : this.config.availabilityMode === 'consecutive'
+            ? `10m 连续成功 ${candidate.recentConsecutiveSuccessCount || 0} 点`
+            : `10m 可用率 ${formatPercent(candidate.success10m)}`;
+        main.append(nameRow, detail);
+        const metrics = document.createElement('div');
+        metrics.className = 'asg-candidate-metrics';
+        const price = document.createElement('span');
+        price.className = 'asg-candidate-price';
+        price.textContent = formatMultiplier(candidate.price);
+        const latency = document.createElement('span');
+        latency.className = 'asg-candidate-latency';
+        latency.textContent = `首 Token ${formatLatency(candidate.latency)}`;
+        metrics.append(price, latency);
+        locate.append(rank, main, metrics);
+        item.appendChild(locate);
         list.appendChild(item);
       }
+    }
+
+    navigateToProviderCandidate(groupName) {
+      const name = String(groupName || '').trim();
+      if (!name) return;
+      const pageWindow = getPageWindow();
+      if (location.pathname.replace(/\/+$/, '') !== '/providers') {
+        try {
+          pageWindow.sessionStorage.setItem(PENDING_PROVIDER_GROUP_KEY, JSON.stringify({
+            name,
+            expiresAt: Date.now() + 30 * 1000,
+          }));
+        } catch {
+          // Navigation still works; only automatic post-navigation location is unavailable.
+        }
+        this.setStatus(`正在前往供应商大厅定位 ${name}`);
+        pageWindow.location.assign('/providers');
+        return;
+      }
+      this.locateProviderCandidate(name);
+    }
+
+    resumePendingProviderLocation() {
+      if (location.pathname.replace(/\/+$/, '') !== '/providers') return;
+      const pageWindow = getPageWindow();
+      let pending = null;
+      try {
+        pending = parsePendingProviderLocation(pageWindow.sessionStorage.getItem(PENDING_PROVIDER_GROUP_KEY));
+        pageWindow.sessionStorage.removeItem(PENDING_PROVIDER_GROUP_KEY);
+      } catch {
+        pending = null;
+      }
+      if (pending) this.locateProviderCandidate(pending.name);
+    }
+
+    locateProviderCandidate(groupName, attempt = 0) {
+      if (!this.active) return;
+      if (this.providerLocateTimer) window.clearTimeout(this.providerLocateTimer);
+      this.providerLocateTimer = null;
+      const row = findProviderGroupRow(document, groupName);
+      if (row) {
+        document.querySelector('.asg-provider-locate-target')?.classList.remove('asg-provider-locate-target');
+        row.classList.add('asg-provider-locate-target');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        this.setStatus(`已定位到 ${groupName}`);
+        if (!this.minimized) {
+          this.panel.hidden = true;
+          this.toggleButton.hidden = false;
+        }
+        this.providerLocateTimer = window.setTimeout(() => {
+          row.classList.remove('asg-provider-locate-target');
+          this.providerLocateTimer = null;
+        }, 2500);
+        return;
+      }
+      if (attempt >= 40) {
+        this.setStatus(`未在供应商大厅找到 ${groupName}`, true);
+        return;
+      }
+      this.providerLocateTimer = window.setTimeout(() => this.locateProviderCandidate(groupName, attempt + 1), 250);
     }
 
     renderActionState() {
@@ -1825,10 +2123,14 @@
     getExcludedGroupInfo,
     analyzeCandidates,
     rankCandidates,
+    getCandidateRankingRule,
+    findProviderGroupRow,
+    parsePendingProviderLocation,
     getMonitorFreshness,
     getLatestMonitorSampleAt,
     getCooldownInfo,
     attachRecentAvailability,
+    buildAvailabilityChartModel,
     normalizeGroupName,
     buildGroupMultiplierMap,
     buildGroupMetricMap,
