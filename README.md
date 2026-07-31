@@ -4,6 +4,12 @@
 
 脚本不会显示或保存完整 API Key。面板顶部会显示当前账户余额，并在每次检测刷新时重新读取。
 
+## `0.5.9` 更新
+
+- 推荐卡片新增最近 6 小时可用性图，直接复用监控序列，不产生额外请求。
+- “推荐排序”展示全部候选分组，并根据当前价格、平衡或速度模式排列。
+- 点击任意候选即可跳转到供应商大厅、滚动到对应分组并短暂高亮。
+
 ## 支持页面
 
 | 页面 | 功能 |
@@ -30,7 +36,7 @@
 ### 方法二：GitHub 直接安装
 
 1. 先安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展。
-2. 打开 [脚本直装地址](https://raw.githubusercontent.com/jwwsjlm/AIHub-Smart-Group/main/aihub-smart-group.user.js)。
+2. 打开 [脚本直装地址](https://raw.githubusercontent.com/victorymt/AIHub-Smart-Group/main/aihub-smart-group.user.js)。
 3. Tampermonkey 会自动识别脚本并显示安装页面，点击“安装”。
 4. 登录 [AIHub](https://aihub.top/) 并刷新目标页面。
 
@@ -188,18 +194,6 @@
 ### 切换按钮是灰色
 
 常见原因包括：尚未选择目标密钥、推荐没有连续通过规定次数、监控数据已经过期、当前密钥已经在推荐分组，或者检测仍在进行。把鼠标移到按钮上可以查看具体原因。
-
-## Greasy Fork 同步
-
-GitHub 仓库：[jwwsjlm/AIHub-Smart-Group](https://github.com/jwwsjlm/AIHub-Smart-Group)
-
-Greasy Fork 脚本页面：[AIHub Smart Group](https://greasyfork.org/zh-CN/scripts/587603-aihub-smart-group)
-
-Greasy Fork 同步源：
-
-`https://raw.githubusercontent.com/jwwsjlm/AIHub-Smart-Group/main/aihub-smart-group.user.js`
-
-仓库已配置 Greasy Fork webhook。向 `main` 分支推送新版本后，Greasy Fork 会自动检查并同步脚本。
 
 ## 参与贡献
 
