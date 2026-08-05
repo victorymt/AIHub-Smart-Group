@@ -65,6 +65,32 @@ test('finds a provider row by its complete normalized group name', () => {
   assert.equal(core.findProviderGroupRow(null, 'A008-BugTeam'), null);
 });
 
+test('finds and reads the native provider refresh button state', () => {
+  const idleButton = { disabled: false, textContent: '刷新' };
+  const busyButton = { disabled: true, textContent: '刷新中' };
+  const root = {
+    querySelector(selector) {
+      assert.equal(selector, '.monitor-refresh-button');
+      return idleButton;
+    },
+  };
+
+  assert.equal(core.findProviderRefreshButton(root), idleButton);
+  assert.equal(core.findProviderRefreshButton(null), null);
+  assert.equal(core.isProviderRefreshButtonBusy(idleButton), false);
+  assert.equal(core.isProviderRefreshButtonBusy(busyButton), true);
+  assert.equal(core.isProviderRefreshButtonBusy({ disabled: false, textContent: '检测中...' }), true);
+});
+
+test('runs provider refresh and recommendation detection from one panel action', () => {
+  assert.match(userscriptSource, /<button data-action="refresh">检测<\/button><button data-action="switch"/);
+  assert.doesNotMatch(userscriptSource, /data-action="refresh-provider"/);
+  assert.match(userscriptSource, /action === 'refresh'\) this\.runManualDetection\(\)/);
+  assert.match(userscriptSource, /location\.pathname\.replace\(\/\\\/\+\$\/, ''\) === '\/providers'/);
+  assert.match(userscriptSource, /\? '刷新并检测'/);
+  assert.match(userscriptSource, /渠道检测刷新完成，正在更新推荐/);
+});
+
 test('accepts only unexpired provider location targets', () => {
   const valid = JSON.stringify({ name: 'A008-BugTeam', expiresAt: 31_000 });
   assert.deepEqual(core.parsePendingProviderLocation(valid, 1_000), { name: 'A008-BugTeam', expiresAt: 31_000 });

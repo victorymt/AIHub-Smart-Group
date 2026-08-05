@@ -2,7 +2,7 @@
 // @name         AIHub Smart Group
 // @name:zh-CN   AIHub 智能分组
 // @namespace    local.aihub.smart-group
-// @version      0.5.10
+// @version      0.5.11
 // @description  Recommend reliable low-cost groups on AIHub.
 // @description:zh-CN 按价格、速度和可用性推荐 AIHub 分组
 // @license      MIT
@@ -28,7 +28,7 @@
 
   const ROOT_ID = 'aihub-smart-group-panel';
   const TOGGLE_ID = 'aihub-smart-group-toggle';
-  const SCRIPT_VERSION = '0.5.10';
+  const SCRIPT_VERSION = '0.5.11';
   const STORAGE_PREFIX = 'aihub-smart-group:';
   const PENDING_PROVIDER_GROUP_KEY = `${STORAGE_PREFIX}pending-provider-group`;
   const AVAILABILITY_CHART_RANGE_MS = 6 * 60 * 60 * 1000;
@@ -236,6 +236,15 @@
       if (normalizeGroupName(name) === targetName) return row;
     }
     return null;
+  }
+
+  function findProviderRefreshButton(root) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+    return root.querySelector('.monitor-refresh-button');
+  }
+
+  function isProviderRefreshButtonBusy(button) {
+    return Boolean(button?.disabled || /刷新中|检测中/.test(String(button?.textContent || '')));
   }
 
   function parsePendingProviderLocation(value, now = Date.now()) {
@@ -1054,6 +1063,10 @@
       this.timer = null;
       this.uiTimer = null;
       this.providerLocateTimer = null;
+      this.providerRefreshTimer = null;
+      this.providerRefreshLoading = false;
+      this.providerRefreshStartedAt = 0;
+      this.providerRefreshSawBusy = false;
       this.panel = null;
       this.toggleButton = null;
       this.active = false;
@@ -1090,9 +1103,11 @@
       if (this.timer) window.clearInterval(this.timer);
       if (this.uiTimer) window.clearInterval(this.uiTimer);
       if (this.providerLocateTimer) window.clearTimeout(this.providerLocateTimer);
+      if (this.providerRefreshTimer) window.clearTimeout(this.providerRefreshTimer);
       this.timer = null;
       this.uiTimer = null;
       this.providerLocateTimer = null;
+      this.providerRefreshTimer = null;
       document.querySelector('.asg-provider-locate-target')?.classList.remove('asg-provider-locate-target');
       this.panel?.remove();
       this.toggleButton?.remove();
@@ -1203,7 +1218,7 @@
           this.setSideOpen(false);
           this.panel.querySelector(`[data-panel-tab="${this.sideTab}"]`)?.focus();
         }
-        if (action === 'refresh') this.refresh(true);
+        if (action === 'refresh') this.runManualDetection();
         if (action === 'switch') this.switchToRecommendation(false);
         if (action === 'save-settings') this.saveSettings();
         if (action === 'clear-logs') this.clearLogs();
@@ -1812,6 +1827,65 @@
       }
     }
 
+    runManualDetection() {
+      if (location.pathname.replace(/\/+$/, '') === '/providers') {
+        this.refreshProviderMonitor();
+        return;
+      }
+      this.refresh(true);
+    }
+
+    refreshProviderMonitor() {
+      if (this.providerRefreshLoading) return;
+      const nativeButton = findProviderRefreshButton(document);
+      if (!nativeButton) {
+        this.log('error', '未找到供应商大厅的渠道刷新按钮，已直接更新推荐');
+        this.refresh(true);
+        return;
+      }
+      if (isProviderRefreshButtonBusy(nativeButton)) {
+        this.setStatus('渠道检测正在刷新...');
+        this.renderActionState();
+        return;
+      }
+
+      this.providerRefreshLoading = true;
+      this.providerRefreshStartedAt = Date.now();
+      this.providerRefreshSawBusy = false;
+      this.setStatus('正在刷新渠道检测...');
+      this.log('info', '已请求刷新渠道检测');
+      this.renderActionState();
+      nativeButton.click();
+      this.providerRefreshSawBusy = isProviderRefreshButtonBusy(findProviderRefreshButton(document) || nativeButton);
+      this.watchProviderRefresh();
+    }
+
+    watchProviderRefresh() {
+      if (!this.active) return;
+      const nativeButton = findProviderRefreshButton(document);
+      const busy = isProviderRefreshButtonBusy(nativeButton);
+      const elapsed = Date.now() - this.providerRefreshStartedAt;
+      if (busy) this.providerRefreshSawBusy = true;
+      if (nativeButton && !busy && (this.providerRefreshSawBusy || elapsed >= 1000)) {
+        this.providerRefreshLoading = false;
+        this.providerRefreshTimer = null;
+        this.log('info', '渠道检测刷新完成，正在更新推荐');
+        this.refresh(true);
+        this.renderActionState();
+        return;
+      }
+      if (elapsed >= 30_000) {
+        this.providerRefreshLoading = false;
+        this.providerRefreshTimer = null;
+        this.setStatus('渠道检测刷新超时，请稍后重试', true);
+        this.log('error', '渠道检测刷新超时');
+        this.renderActionState();
+        return;
+      }
+      this.providerRefreshTimer = window.setTimeout(() => this.watchProviderRefresh(), 100);
+      this.renderActionState();
+    }
+
     navigateToProviderCandidate(groupName) {
       const name = String(groupName || '').trim();
       if (!name) return;
@@ -1873,6 +1947,24 @@
     }
 
     renderActionState() {
+      const refreshButton = this.panel.querySelector('[data-action="refresh"]');
+      const onProvidersPage = location.pathname.replace(/\/+$/, '') === '/providers';
+      const nativeProviderButton = onProvidersPage ? findProviderRefreshButton(document) : null;
+      const providerBusy = isProviderRefreshButtonBusy(nativeProviderButton);
+      refreshButton.disabled = this.loading || this.providerRefreshLoading || providerBusy;
+      refreshButton.textContent = this.providerRefreshLoading || providerBusy
+        ? '渠道刷新中...'
+        : this.loading
+          ? '检测中...'
+          : onProvidersPage
+            ? '刷新并检测'
+            : '检测';
+      refreshButton.title = onProvidersPage
+        ? (nativeProviderButton
+          ? '先刷新供应商大厅的渠道数据，再更新智能推荐'
+          : '未找到顶部刷新按钮，将直接更新智能推荐')
+        : '更新智能推荐';
+
       const button = this.panel.querySelector('[data-action="switch"]');
       const winner = this.ranked[0];
       const key = this.selectedKey();
@@ -2220,6 +2312,8 @@
     rankCandidates,
     getCandidateRankingRule,
     findProviderGroupRow,
+    findProviderRefreshButton,
+    isProviderRefreshButtonBusy,
     parsePendingProviderLocation,
     getMonitorFreshness,
     getLatestMonitorSampleAt,
