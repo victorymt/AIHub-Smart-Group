@@ -51,6 +51,8 @@ test('renders the full candidate ranking as compact locatable table rows', () =>
   assert.match(userscriptSource, /locate\.dataset\.action = 'locate-provider-icon'/);
   assert.match(userscriptSource, /event\.stopPropagation\(\)/);
   assert.match(userscriptSource, /className = 'asg-candidate-hitbox'/);
+  assert.match(userscriptSource, /\.asg-candidate-row\{position:relative;z-index:2;[^}]*pointer-events:none/);
+  assert.match(userscriptSource, /\.asg-candidate-hitbox\{[^}]*z-index:1;[^}]*background:transparent!important/);
   assert.match(userscriptSource, /\.asg-ranking:not\(\[data-smart=true\]\) \.asg-candidate-score-column\{display:none\}/);
 });
 
