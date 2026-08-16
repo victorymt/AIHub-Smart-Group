@@ -2,7 +2,7 @@
 // @name         AIHub Smart Group
 // @name:zh-CN   AIHub 智能分组
 // @namespace    local.aihub.smart-group
-// @version      0.7.0
+// @version      0.8.0
 // @description  Recommend reliable low-cost groups on AIHub.
 // @description:zh-CN 按价格、速度和可用性推荐 AIHub 分组
 // @license      MIT
@@ -28,7 +28,7 @@
 
   const ROOT_ID = 'aihub-smart-group-panel';
   const TOGGLE_ID = 'aihub-smart-group-toggle';
-  const SCRIPT_VERSION = '0.7.0';
+  const SCRIPT_VERSION = '0.8.0';
   const STORAGE_PREFIX = 'aihub-smart-group:';
   const PENDING_PROVIDER_GROUP_KEY = `${STORAGE_PREFIX}pending-provider-group`;
   const AVAILABILITY_CHART_RANGE_MS = 6 * 60 * 60 * 1000;
@@ -1086,11 +1086,11 @@
   }
 
   const STYLE = `
-    #${ROOT_ID}{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));z-index:2147483647;display:flex;flex-direction:column;width:min(480px,calc(100vw - 32px));height:min(700px,calc(100vh - 32px));color:#172033;background:#fff;border:1px solid #d0d5dd;border-radius:10px;box-shadow:0 18px 48px rgba(16,24,40,.22);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden;isolation:isolate}
-    #${ROOT_ID}[data-side-open=true]{width:min(820px,calc(100vw - 32px))}
+    #${ROOT_ID}{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));z-index:2147483647;display:flex;flex-direction:column;width:min(480px,calc(100vw - 32px));height:min(720px,calc(100vh - 32px));color:#172033;background:#fff;border:1px solid #d0d5dd;border-radius:8px;box-shadow:0 18px 48px rgba(16,24,40,.22);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden;isolation:isolate}
+    #${ROOT_ID}[data-side-open=true]{width:min(840px,calc(100vw - 32px))}
     #${ROOT_ID}[hidden]{display:none}
     #${ROOT_ID} *{box-sizing:border-box}
-    #${ROOT_ID} .asg-head{display:flex;flex:none;align-items:center;justify-content:space-between;min-height:48px;padding:8px 10px 8px 16px;background:#f8fafc;border-bottom:1px solid #e4e7ec}
+    #${ROOT_ID} .asg-head{position:relative;z-index:4;display:flex;flex:none;align-items:center;justify-content:space-between;min-height:48px;padding:8px 10px 8px 16px;background:#f8fafc;border-bottom:1px solid #e4e7ec}
     #${ROOT_ID} .asg-head-title{display:flex;align-items:center;gap:8px;min-width:0}
     #${ROOT_ID} .asg-head-title strong{overflow:hidden;font-size:14px;text-overflow:ellipsis;white-space:nowrap}
     #${ROOT_ID} .asg-head-title span{flex:none;padding:2px 6px;color:#667085;background:#eef2f6;border-radius:4px;font-size:10px;font-weight:600}
@@ -1104,6 +1104,7 @@
     #${ROOT_ID} button:disabled{cursor:not-allowed;opacity:.5}
     #${ROOT_ID} button:focus-visible,#${ROOT_ID} select:focus-visible,#${ROOT_ID} input:focus-visible,#${ROOT_ID} summary:focus-visible{outline:2px solid #2e6fe8;outline-offset:2px}
     #${ROOT_ID} .asg-icon{display:grid;place-items:center;width:32px;height:32px;min-height:32px;border:0;padding:0;font-size:20px;line-height:1}
+    #${ROOT_ID} .asg-help{display:grid;place-items:center;width:32px;height:32px;min-height:32px;border:0;padding:0;color:#667085;font-size:13px;font-weight:700;line-height:1}
     #${ROOT_ID} .asg-body{display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-height:0;overflow:hidden}
     #${ROOT_ID}[data-side-open=true] .asg-body{grid-template-columns:minmax(0,1.15fr) minmax(330px,.85fr)}
     #${ROOT_ID} .asg-main-column,#${ROOT_ID} .asg-side-column{min-width:0;min-height:0;overflow:auto;padding:14px 16px;scrollbar-gutter:stable}
@@ -1117,11 +1118,17 @@
     #${ROOT_ID} .asg-status.asg-error{background:transparent;border-color:transparent}
     #${ROOT_ID} .asg-balance{flex:none;color:#15803d;font-size:12px;font-weight:600;text-align:right;white-space:nowrap}
     #${ROOT_ID} .asg-balance.asg-balance-error{color:#b54708;font-weight:500}
-    #${ROOT_ID} .asg-recommend{padding:11px 12px;background:#f4f8ff;border:1px solid #cfe0ff;border-radius:8px;margin:10px 0 12px}
+    #${ROOT_ID} .asg-control-label{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    #${ROOT_ID} .asg-filter-chips{display:flex;flex-wrap:wrap;gap:5px;min-height:23px;margin:7px 0 9px}
+    #${ROOT_ID} .asg-filter-chip{display:inline-flex;align-items:center;min-height:23px;padding:2px 7px;color:#475467;background:#f2f4f7;border:1px solid #e4e7ec;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap}
+    #${ROOT_ID} .asg-recommend{padding:10px 12px;background:#f4f8ff;border:1px solid #cfe0ff;border-radius:6px;margin:0 0 12px}
     #${ROOT_ID} .asg-recommend.asg-recommend-stale{background:#fff4f2;border-color:#fecdca}
-    #${ROOT_ID} .asg-recommend strong{font-size:15px;line-height:1.35}
+    #${ROOT_ID} .asg-recommend-title{display:flex;align-items:baseline;gap:7px;min-width:0}
+    #${ROOT_ID} .asg-recommend-title span{flex:none;color:#175cd3;font-size:10px;font-weight:700;text-transform:uppercase}
+    #${ROOT_ID} .asg-recommend-title strong{min-width:0;overflow:hidden;font-size:15px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
     #${ROOT_ID} .asg-muted{color:#667085}
-    #${ROOT_ID} .asg-metrics{display:flex;flex-wrap:wrap;gap:6px 12px;color:#475467;font-size:12px;margin-top:4px}
+    #${ROOT_ID} .asg-metrics{display:flex;flex-wrap:wrap;gap:4px 12px;color:#475467;font-size:11px;margin-top:6px}
+    #${ROOT_ID} .asg-metric-strong{color:#15803d;font-weight:700}
     #${ROOT_ID} .asg-provider-signals,#${ROOT_ID} .asg-candidate-signals{display:flex;align-items:center;gap:4px 10px;min-width:0;margin-top:5px;overflow:hidden}
     #${ROOT_ID} .asg-provider-signals{flex-wrap:wrap}
     #${ROOT_ID} .asg-provider-signal{flex:none;font-size:10px;font-weight:600;white-space:nowrap}
@@ -1140,7 +1147,10 @@
     #${ROOT_ID} .asg-availability-point{stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke}
     #${ROOT_ID} .asg-availability-point-ok{fill:#12b76a}
     #${ROOT_ID} .asg-availability-point-failed{fill:#f04438}
-    #${ROOT_ID} .asg-recommend-meta{margin-top:5px;color:#667085;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+    #${ROOT_ID} .asg-recommend-details{margin-top:7px;padding-top:6px;border-top:1px solid #dce6f7}
+    #${ROOT_ID} .asg-recommend-details summary{font-size:11px;font-weight:600}
+    #${ROOT_ID} .asg-recommend-detail-body{padding-top:2px}
+    #${ROOT_ID} .asg-recommend-meta{margin-top:6px;color:#667085;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
     #${ROOT_ID} .asg-monitor-age{margin-top:4px;color:#15803d;font-size:11px}
     #${ROOT_ID} .asg-monitor-age.asg-stale{color:#b42318;font-weight:600}
     #${ROOT_ID} label{display:block;color:#475467;font-size:12px;margin:9px 0 5px}
@@ -1159,21 +1169,24 @@
     #${ROOT_ID} .asg-actions button:last-child:hover:not(:disabled){background:#0f46b6;border-color:#0f46b6}
     #${ROOT_ID} .asg-auto{display:flex;align-items:center;gap:6px;margin-top:9px;color:#475467}
     #${ROOT_ID} .asg-auto input{margin:0}
-    #${ROOT_ID} .asg-guide{margin-top:8px;color:#475467;font-size:12px}
-    #${ROOT_ID} .asg-guide ol{margin:6px 0 0;padding-left:20px}
-    #${ROOT_ID} details{margin-top:9px;border-top:1px solid #e4e7ec;padding-top:7px}
     #${ROOT_ID} summary{cursor:pointer;color:#475467}
     #${ROOT_ID} .asg-side-head{position:sticky;top:-14px;z-index:1;display:flex;align-items:center;justify-content:space-between;min-height:46px;margin:-14px -16px 0;padding:7px 10px 7px 16px;background:#f8fafc;border-bottom:1px solid #e4e7ec}
     #${ROOT_ID} .asg-side-head strong{color:#344054;font-size:13px}
     #${ROOT_ID} .asg-side-close{display:grid;place-items:center;width:32px;height:32px;min-height:32px;border:0;padding:0;background:transparent;font-size:18px;line-height:1}
     #${ROOT_ID} .asg-side-view[hidden]{display:none}
-    #${ROOT_ID} .asg-settings-body{margin-top:8px}
-    #${ROOT_ID} .asg-settings-section{padding:9px 0}
-    #${ROOT_ID} .asg-settings-section+.asg-settings-section{border-top:1px solid #eef0f3}
+    #${ROOT_ID} .asg-side-view:not([hidden]){display:flex;flex-direction:column;min-height:calc(100% - 32px)}
+    #${ROOT_ID} .asg-settings-body{flex:1 0 auto;margin-top:8px;padding-bottom:4px}
+    #${ROOT_ID} .asg-settings-section{margin:0;border-bottom:1px solid #e4e7ec;padding:0}
+    #${ROOT_ID} .asg-settings-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:38px;padding:7px 2px;list-style:none}
+    #${ROOT_ID} .asg-settings-summary::-webkit-details-marker{display:none}
+    #${ROOT_ID} .asg-settings-summary::after{flex:none;color:#667085;font-size:12px;content:"+"}
+    #${ROOT_ID} .asg-settings-section[open]>.asg-settings-summary::after{content:"−"}
+    #${ROOT_ID} .asg-settings-section[open]>.asg-settings-summary{margin-bottom:7px}
     #${ROOT_ID} .asg-settings-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;min-width:0}
     #${ROOT_ID} .asg-settings-title{flex:none;color:#344054;font-size:12px;font-weight:700}
     #${ROOT_ID} .asg-settings-inline-label{min-width:0;margin:0;color:#475467;font-size:12px;line-height:1.3;overflow-wrap:anywhere}
     #${ROOT_ID} .asg-settings-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px 10px}
+    #${ROOT_ID} .asg-settings-section>.asg-settings-grid{padding:0 2px 12px}
     #${ROOT_ID} .asg-settings-grid label{margin:0}
     #${ROOT_ID} .asg-settings-grid input[type=number],#${ROOT_ID} .asg-settings-grid input[type=text]{margin-top:3px}
     #${ROOT_ID} .asg-setting-wide{grid-column:1/-1}
@@ -1182,36 +1195,44 @@
     #${ROOT_ID} .asg-balance-setting{grid-column:1/-1}
     #${ROOT_ID} .asg-balance-preview,#${ROOT_ID} .asg-balance-reason,#${ROOT_ID} .asg-setting-preview{display:block;margin-top:4px;color:#15803d;font-size:11px;line-height:1.4;overflow-wrap:anywhere}
     #${ROOT_ID} .asg-preview-pending{color:#b54708}
-    #${ROOT_ID} .asg-save{width:100%;margin-top:8px;background:#1456d9;color:#fff;border-color:#1456d9;font-weight:600}
+    #${ROOT_ID} .asg-settings-footer{position:sticky;bottom:-14px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px -16px -14px;padding:10px 16px max(10px,env(safe-area-inset-bottom));background:#f8fafc;border-top:1px solid #d0d5dd;box-shadow:0 -6px 16px rgba(16,24,40,.06)}
+    #${ROOT_ID} .asg-unsaved{flex:1 1 auto;min-width:0;color:#667085;font-size:11px;overflow-wrap:anywhere}
+    #${ROOT_ID} .asg-unsaved.asg-preview-pending{color:#b54708;font-weight:600}
+    #${ROOT_ID} .asg-save{flex:none;width:auto!important;min-width:96px;background:#1456d9;color:#fff;border-color:#1456d9;font-weight:600}
     #${ROOT_ID} .asg-save:hover:not(:disabled){background:#0f46b6}
     #${ROOT_ID} .asg-log-actions{display:flex;justify-content:flex-end;margin-top:7px}
     #${ROOT_ID} .asg-logs{margin:6px 0 0;padding:0;list-style:none;border-top:1px solid #eef0f3}
     #${ROOT_ID} .asg-logs li{padding:5px 0;border-bottom:1px solid #eef0f3;font-size:11px;overflow-wrap:anywhere}
     #${ROOT_ID} .asg-logs .asg-log-error{color:#b42318}
-    #${ROOT_ID} .asg-ranking{margin-top:11px;border-top:1px solid #e4e7ec}
+    #${ROOT_ID} .asg-ranking{--asg-candidate-columns:30px minmax(110px,1fr) 60px 70px 84px 32px;margin-top:11px;border-top:1px solid #e4e7ec}
+    #${ROOT_ID} .asg-ranking[data-smart=true]{--asg-candidate-columns:30px minmax(100px,1fr) 58px 68px 82px 62px 32px}
     #${ROOT_ID} .asg-ranking-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:9px 0 6px}
     #${ROOT_ID} .asg-ranking-title{color:#344054;font-size:12px;font-weight:600}
     #${ROOT_ID} .asg-ranking-rule{min-width:0;color:#667085;font-size:10px;text-align:right;overflow-wrap:anywhere}
-    #${ROOT_ID} .asg-list{margin:0;padding:0;list-style:none;max-height:min(240px,32vh);overflow:auto;border-top:1px solid #eef0f3;scrollbar-gutter:stable}
-    #${ROOT_ID} .asg-list li{border-bottom:1px solid #eef0f3}
+    #${ROOT_ID} .asg-candidate-table-head,#${ROOT_ID} .asg-candidate-row{display:grid;grid-template-columns:var(--asg-candidate-columns);align-items:center;gap:7px}
+    #${ROOT_ID} .asg-candidate-table-head{min-height:28px;padding:4px;color:#667085;border-top:1px solid #eef0f3;border-bottom:1px solid #eef0f3;font-size:9px;font-weight:700;text-align:right}
+    #${ROOT_ID} .asg-candidate-table-head span:nth-child(2){text-align:left}
+    #${ROOT_ID} .asg-list{margin:0;padding:0;list-style:none;max-height:min(260px,35vh);overflow:auto;scrollbar-gutter:stable}
+    #${ROOT_ID} .asg-list li{position:relative;border-bottom:1px solid #eef0f3}
     #${ROOT_ID} .asg-list li.asg-candidate-best{background:#f4f8ff}
-    #${ROOT_ID} .asg-candidate-locate{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:48px;padding:7px 4px;border:0;border-radius:0;background:transparent;color:inherit;text-align:left}
-    #${ROOT_ID} .asg-candidate-locate:hover{background:#f8fafc!important}
-    #${ROOT_ID} .asg-candidate-best .asg-candidate-locate{background:#f4f8ff}
-    #${ROOT_ID} .asg-candidate-best .asg-candidate-locate:hover{background:#edf4ff!important}
-    #${ROOT_ID} .asg-candidate-locate:focus-visible{outline:2px solid #1456d9;outline-offset:-2px}
+    #${ROOT_ID} .asg-list li:hover{background:#f8fafc}
+    #${ROOT_ID} .asg-list li.asg-candidate-best:hover{background:#edf4ff}
+    #${ROOT_ID} .asg-candidate-row{width:100%;min-height:44px;padding:5px 4px;color:inherit;pointer-events:none;text-align:right}
+    #${ROOT_ID} .asg-candidate-hitbox{position:absolute;inset:0;z-index:1;width:100%;height:100%;min-height:0;border:0;border-radius:0;padding:0;background:transparent}
+    #${ROOT_ID} .asg-candidate-hitbox:hover{background:transparent}
+    #${ROOT_ID} .asg-candidate-hitbox:focus-visible{outline:2px solid #1456d9;outline-offset:-2px}
     #${ROOT_ID} .asg-candidate-rank{color:#667085;font-size:11px;font-variant-numeric:tabular-nums}
-    #${ROOT_ID} .asg-candidate-main{min-width:0}
-    #${ROOT_ID} .asg-candidate-name-row{display:flex;align-items:center;gap:5px;min-width:0}
+    #${ROOT_ID} .asg-candidate-name-row{display:flex;align-items:center;gap:5px;min-width:0;text-align:left}
     #${ROOT_ID} .asg-candidate-name{min-width:0;overflow:hidden;color:#344054;font-size:12px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
     #${ROOT_ID} .asg-candidate-badge{flex:none;color:#1456d9;font-size:10px;font-weight:600;white-space:nowrap}
-    #${ROOT_ID} .asg-candidate-detail{margin-top:1px;overflow:hidden;color:#667085;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
-    #${ROOT_ID} .asg-candidate-signals{margin-top:1px;text-overflow:ellipsis;white-space:nowrap}
-    #${ROOT_ID} .asg-candidate-signals .asg-provider-signal{font-size:9px}
-    #${ROOT_ID} .asg-candidate-metrics{text-align:right;white-space:nowrap}
-    #${ROOT_ID} .asg-candidate-price{display:block;color:#15803d;font-size:12px;font-weight:700}
-    #${ROOT_ID} .asg-candidate-latency{display:block;margin-top:1px;color:#475467;font-size:10px}
-    #${ROOT_ID} .asg-candidate-score{display:block;margin-top:1px;color:#1456d9;font-size:10px;font-weight:600}
+    #${ROOT_ID} .asg-candidate-cell{min-width:0;overflow:hidden;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+    #${ROOT_ID} .asg-candidate-price{color:#15803d;font-size:11px;font-weight:700}
+    #${ROOT_ID} .asg-candidate-latency{color:#475467}
+    #${ROOT_ID} .asg-candidate-availability{color:#475467}
+    #${ROOT_ID} .asg-candidate-score{color:#1456d9;font-weight:700}
+    #${ROOT_ID} .asg-ranking:not([data-smart=true]) .asg-candidate-score-column{display:none}
+    #${ROOT_ID} .asg-candidate-go-slot{width:32px;height:32px}
+    #${ROOT_ID} .asg-candidate-go{position:absolute;top:50%;right:4px;z-index:2;display:grid;place-items:center;width:32px;height:32px;min-height:32px;border:0;padding:0;background:transparent;color:#175cd3;font-size:15px;line-height:1;transform:translateY(-50%)}
     #${ROOT_ID} .asg-candidate-empty{padding:7px 3px;color:#667085;text-align:center}
     #${ROOT_ID} .asg-error{color:#b42318;background:#fff4f2;border-color:#fecdca}
     .dark #${ROOT_ID}{color:#f2f4f7;background:#101828;border-color:#344054;box-shadow:0 18px 48px rgba(0,0,0,.48)}
@@ -1223,17 +1244,19 @@
     .dark #${ROOT_ID} .asg-head-tab[aria-selected=true]{color:#84adff;background:#101828;box-shadow:none}
     .dark #${ROOT_ID} button,.dark #${ROOT_ID} select,.dark #${ROOT_ID} input[type=number],.dark #${ROOT_ID} input[type=text]{color:#f2f4f7;background:#101828;border-color:#475467;color-scheme:dark}
     .dark #${ROOT_ID} button:hover:not(:disabled){background:#344054;border-color:#667085}
-    .dark #${ROOT_ID} .asg-status-row,.dark #${ROOT_ID} .asg-key-details,.dark #${ROOT_ID} .asg-settings-section+.asg-settings-section,.dark #${ROOT_ID} details,.dark #${ROOT_ID} .asg-ranking,.dark #${ROOT_ID} .asg-list,.dark #${ROOT_ID} .asg-list li,.dark #${ROOT_ID} .asg-logs,.dark #${ROOT_ID} .asg-logs li{border-color:#344054}
+    .dark #${ROOT_ID} .asg-status-row,.dark #${ROOT_ID} .asg-key-details,.dark #${ROOT_ID} .asg-settings-section,.dark #${ROOT_ID} .asg-recommend-details,.dark #${ROOT_ID} .asg-ranking,.dark #${ROOT_ID} .asg-candidate-table-head,.dark #${ROOT_ID} .asg-list li,.dark #${ROOT_ID} .asg-logs,.dark #${ROOT_ID} .asg-logs li{border-color:#344054}
     .dark #${ROOT_ID} .asg-key-details{background:#182230}
     .dark #${ROOT_ID} .asg-recommend{background:rgba(20,86,217,.2);border-color:#315c9d}
     .dark #${ROOT_ID} .asg-recommend.asg-recommend-stale{background:rgba(180,35,24,.18);border-color:#912018}
-    .dark #${ROOT_ID} .asg-candidate-best,.dark #${ROOT_ID} .asg-candidate-best .asg-candidate-locate{background:rgba(20,86,217,.2)}
-    .dark #${ROOT_ID} .asg-candidate-locate:hover,.dark #${ROOT_ID} .asg-candidate-best .asg-candidate-locate:hover{background:#1d2939!important}
-    .dark #${ROOT_ID} .asg-muted,.dark #${ROOT_ID} .asg-status,.dark #${ROOT_ID} .asg-availability-summary,.dark #${ROOT_ID} .asg-availability-axis,.dark #${ROOT_ID} .asg-recommend-meta,.dark #${ROOT_ID} .asg-key-detail span,.dark #${ROOT_ID} .asg-ranking-rule,.dark #${ROOT_ID} .asg-candidate-rank,.dark #${ROOT_ID} .asg-candidate-detail,.dark #${ROOT_ID} .asg-candidate-empty{color:#98a2b3}
-    .dark #${ROOT_ID} label,.dark #${ROOT_ID} summary,.dark #${ROOT_ID} .asg-auto,.dark #${ROOT_ID} .asg-settings-inline-label,.dark #${ROOT_ID} .asg-metrics,.dark #${ROOT_ID} .asg-candidate-latency{color:#d0d5dd}
+    .dark #${ROOT_ID} .asg-filter-chip{color:#d0d5dd;background:#344054;border-color:#475467}
+    .dark #${ROOT_ID} .asg-candidate-best{background:rgba(20,86,217,.2)}
+    .dark #${ROOT_ID} .asg-list li:hover,.dark #${ROOT_ID} .asg-list li.asg-candidate-best:hover{background:#1d2939}
+    .dark #${ROOT_ID} .asg-muted,.dark #${ROOT_ID} .asg-status,.dark #${ROOT_ID} .asg-availability-summary,.dark #${ROOT_ID} .asg-availability-axis,.dark #${ROOT_ID} .asg-recommend-meta,.dark #${ROOT_ID} .asg-key-detail span,.dark #${ROOT_ID} .asg-ranking-rule,.dark #${ROOT_ID} .asg-candidate-table-head,.dark #${ROOT_ID} .asg-candidate-rank,.dark #${ROOT_ID} .asg-candidate-empty,.dark #${ROOT_ID} .asg-unsaved{color:#98a2b3}
+    .dark #${ROOT_ID} label,.dark #${ROOT_ID} summary,.dark #${ROOT_ID} .asg-auto,.dark #${ROOT_ID} .asg-settings-inline-label,.dark #${ROOT_ID} .asg-metrics,.dark #${ROOT_ID} .asg-candidate-latency,.dark #${ROOT_ID} .asg-candidate-availability{color:#d0d5dd}
     .dark #${ROOT_ID} .asg-candidate-score{color:#84adff}
     .dark #${ROOT_ID} .asg-side-head strong,.dark #${ROOT_ID} .asg-settings-title,.dark #${ROOT_ID} .asg-ranking-title,.dark #${ROOT_ID} .asg-candidate-name,.dark #${ROOT_ID} .asg-availability-title{color:#e4e7ec}
     .dark #${ROOT_ID} .asg-balance,.dark #${ROOT_ID} .asg-key-metric,.dark #${ROOT_ID} .asg-candidate-price,.dark #${ROOT_ID} .asg-monitor-age,.dark #${ROOT_ID} .asg-balance-preview,.dark #${ROOT_ID} .asg-balance-reason,.dark #${ROOT_ID} .asg-setting-preview{color:#6ce9a6}
+    .dark #${ROOT_ID} .asg-settings-footer{background:#182230;border-color:#475467;box-shadow:0 -6px 16px rgba(0,0,0,.2)}
     .dark #${ROOT_ID} .asg-save{color:#fff;background:#1456d9;border-color:#1456d9}
     .dark #${ROOT_ID} .asg-save:hover:not(:disabled){background:#2e6fe8;border-color:#2e6fe8}
     .dark #${ROOT_ID} .asg-error{color:#fda29b;background:rgba(180,35,24,.18);border-color:#912018}
@@ -1255,29 +1278,25 @@
     #${TOGGLE_ID}[hidden]{display:none}
     #${TOGGLE_ID}:hover{background:#0f46b6}
     @media (max-width:759px){
-      #${ROOT_ID},#${ROOT_ID}[data-side-open=true]{width:min(360px,calc(100vw - 32px))}
-      #${ROOT_ID} .asg-body{
-        display:flex;
-        flex-direction:column;
-        overflow:auto;
-        -webkit-overflow-scrolling:touch;
-      }
-      #${ROOT_ID} .asg-main-column,
-      #${ROOT_ID} .asg-side-column{
-        flex:0 0 auto;
-        min-height:auto;
-        overflow:visible;
-      }
-      #${ROOT_ID} .asg-side-column{
-        border-top:1px solid #e4e7ec;
-        border-left:0;
-      }
-      #${ROOT_ID} .asg-side-head{
-        position:static;
-        top:auto;
-        z-index:auto;
-        margin:-14px -16px 0;
-      }
+      #${ROOT_ID},#${ROOT_ID}[data-side-open=true]{right:max(8px,env(safe-area-inset-right));bottom:max(8px,env(safe-area-inset-bottom));width:calc(100vw - 16px);height:min(720px,90vh);max-height:90vh}
+      #${ROOT_ID} .asg-body{display:block;overflow:hidden}
+      #${ROOT_ID} .asg-main-column,#${ROOT_ID} .asg-side-column{height:100%;overflow:auto;-webkit-overflow-scrolling:touch}
+      #${ROOT_ID}[data-side-open=true] .asg-main-column{display:none}
+      #${ROOT_ID} .asg-side-column{border-left:0}
+      #${ROOT_ID} .asg-actions{position:sticky;bottom:-14px;z-index:3;margin:10px -16px -14px;padding:10px 16px max(10px,env(safe-area-inset-bottom));background:#fff;border-top:1px solid #e4e7ec;box-shadow:0 -6px 16px rgba(16,24,40,.06)}
+      #${ROOT_ID} .asg-candidate-table-head{display:none}
+      #${ROOT_ID} .asg-ranking,#${ROOT_ID} .asg-ranking[data-smart=true]{--asg-candidate-columns:26px minmax(0,1fr) auto 52px}
+      #${ROOT_ID} .asg-candidate-row{grid-template-areas:"rank name price locate" ". latency availability score";min-height:64px;row-gap:4px}
+      #${ROOT_ID} .asg-ranking:not([data-smart=true]) .asg-candidate-row{grid-template-areas:"rank name price locate" ". latency availability availability"}
+      #${ROOT_ID} .asg-candidate-rank{grid-area:rank}
+      #${ROOT_ID} .asg-candidate-name-row{grid-area:name}
+      #${ROOT_ID} .asg-candidate-price{grid-area:price}
+      #${ROOT_ID} .asg-candidate-latency{grid-area:latency;text-align:left}
+      #${ROOT_ID} .asg-candidate-availability{grid-area:availability}
+      #${ROOT_ID} .asg-candidate-score{grid-area:score}
+      #${ROOT_ID} .asg-candidate-go-slot{grid-area:locate;justify-self:end}
+      #${ROOT_ID} .asg-candidate-go{top:5px;transform:none}
+      .dark #${ROOT_ID} .asg-actions{background:#101828;border-color:#344054;box-shadow:0 -6px 16px rgba(0,0,0,.2)}
     }
     @media (max-width:399px){
       #${ROOT_ID} .asg-head{padding-left:12px}
@@ -1439,6 +1458,7 @@
         <div class="asg-head">
           <div class="asg-head-title"><strong>AIHub 智能分组</strong><span>v${SCRIPT_VERSION}</span></div>
           <div class="asg-head-actions">
+            <button type="button" class="asg-help" title="选择模式与密钥后执行检测；确认推荐稳定后可手动切换。" aria-label="操作提示：选择模式与密钥后执行检测，确认推荐稳定后可手动切换">?</button>
             <div class="asg-head-tabs" role="tablist" aria-label="面板工具">
               <button type="button" class="asg-head-tab" role="tab" id="asg-settings-tab" aria-controls="asg-settings-view" aria-selected="false" aria-expanded="false" data-panel-tab="settings">设置</button>
               <button type="button" class="asg-head-tab" role="tab" id="asg-logs-tab" aria-controls="asg-logs-view" aria-selected="false" aria-expanded="false" data-panel-tab="logs">日志</button>
@@ -1451,6 +1471,7 @@
             <div class="asg-status-row"><div class="asg-status" data-field="status">准备检测</div><div class="asg-balance" data-field="balance">余额读取中...</div></div>
             <label for="asg-mode-select">模式</label>
             <select id="asg-mode-select" data-field="mode"><option value="price">价格（最低价格）</option><option value="balance">平衡（倍率上限内首 Token 最快）</option><option value="speed">速度（最快首字）</option><option value="smart">智能（倍率上限内综合评分）</option></select>
+            <div class="asg-filter-chips" data-field="active-filters" aria-label="当前筛选条件"></div>
             <div class="asg-recommend" data-field="recommend"><div class="asg-muted">正在读取监控数据...</div></div>
             <label for="asg-key-select">目标密钥</label>
             <select id="asg-key-select" data-field="key"></select>
@@ -1462,17 +1483,20 @@
             </div>
             <div class="asg-actions"><button data-action="refresh">检测</button><button data-action="switch" disabled>切换到推荐分组</button></div>
             <label class="asg-auto"><input type="checkbox" data-field="auto"> 自动切换（默认关闭）</label>
-            <details class="asg-guide"><summary>快速开始</summary><ol><li>选择价格、平衡、速度或智能模式。</li><li>选择目标密钥并点击“检测”。</li><li>确认推荐分组后点击切换；自动切换可在设置中开启。</li></ol></details>
-            <section class="asg-ranking" aria-labelledby="asg-ranking-title"><div class="asg-ranking-head"><span class="asg-ranking-title" id="asg-ranking-title">推荐排序</span><span class="asg-ranking-rule" data-field="ranking-rule"></span></div><ol class="asg-list" data-field="list"></ol></section>
+            <section class="asg-ranking" aria-labelledby="asg-ranking-title" data-smart="false">
+              <div class="asg-ranking-head"><span class="asg-ranking-title" id="asg-ranking-title">推荐排序</span><span class="asg-ranking-rule" data-field="ranking-rule"></span></div>
+              <div class="asg-candidate-table-head" role="row" aria-hidden="true"><span>排名</span><span>分组</span><span>倍率</span><span>TTFT</span><span>10m 可用</span><span class="asg-candidate-score-column">评分</span><span>定位</span></div>
+              <ol class="asg-list" data-field="list" role="rowgroup"></ol>
+            </section>
           </div>
           <aside class="asg-side-column" id="asg-side-column" aria-label="设置与日志" hidden>
             <div class="asg-side-head"><strong data-field="side-title">设置</strong><button type="button" class="asg-side-close" data-action="close-side" title="关闭侧栏" aria-label="关闭侧栏">×</button></div>
             <section class="asg-side-view" id="asg-settings-view" role="tabpanel" aria-labelledby="asg-settings-tab" data-panel-view="settings">
               <div class="asg-settings-body">
-              <section class="asg-settings-section">
-                <div class="asg-settings-head"><div class="asg-settings-title">可靠性筛选</div><label class="asg-settings-inline-label" for="asg-availability-mode-setting">可用性判断方式</label></div>
+              <details class="asg-settings-section" data-setting-group="reliability" open>
+                <summary class="asg-settings-summary"><span class="asg-settings-title">可靠性筛选</span><span class="asg-settings-inline-label">可用性与排除规则</span></summary>
                 <div class="asg-settings-grid">
-                  <select id="asg-availability-mode-setting" data-setting="availabilityMode"><option value="percent">按可用率（百分比）</option><option value="successes">按成功监控点数</option><option value="consecutive">按连续成功点数</option></select>
+                  <label>可用性判断方式<select id="asg-availability-mode-setting" data-setting="availabilityMode"><option value="percent">按可用率（百分比）</option><option value="successes">按成功监控点数</option><option value="consecutive">按连续成功点数</option></select></label>
                   <label class="asg-setting-compact asg-auto"><input type="checkbox" data-setting="requireNoWarnings"> 排除监控警告</label>
                   <label class="asg-setting-wide" data-availability-setting="percent" title="可自行修改，0.1 表示 10%">最近10分钟最低可用率（默认10%）<input type="number" min="0" max="1" step="0.01" data-setting="minSuccess10m"></label>
                   <label class="asg-setting-wide" data-availability-setting="successes">最近10分钟至少成功监控点数<input type="number" min="1" max="60" step="1" data-setting="minSuccessPoints10m"></label>
@@ -1480,31 +1504,31 @@
                   <label class="asg-setting-wide" title="名称包含任一关键词的分组不会参与推荐或切换">排除分组关键词（使用 | 分隔）<input type="text" data-setting="excludedGroupKeywords" placeholder="例如 free|unstable"></label>
                   <span class="asg-setting-preview asg-setting-wide" data-field="excluded-preview" aria-live="polite"></span>
                 </div>
-              </section>
-              <section class="asg-settings-section">
-                <div class="asg-settings-title">模型与缓存</div>
+              </details>
+              <details class="asg-settings-section" data-setting-group="model-cache">
+                <summary class="asg-settings-summary"><span class="asg-settings-title">模型与缓存</span><span class="asg-settings-inline-label">目标、检测、命中率</span></summary>
                 <div class="asg-settings-grid">
                   <label>目标模型<select data-setting="targetModel"><option value="any">全部模型</option><option value="sol">Sol</option><option value="terra">Terra</option><option value="luna">Luna</option></select></label>
                   <label>模型检测策略<select data-setting="modelDetectionPolicy"><option value="observe">观察（不筛选）</option><option value="standard">标准（排除存疑/失败）</option><option value="strict">严格（只要通过且未过期）</option></select></label>
                   <label class="asg-setting-wide" title="0 表示不按缓存命中率筛选">最低缓存命中率（0–1）<input type="number" min="0" max="1" step="0.01" data-setting="minCacheHitRate"></label>
                 </div>
-              </section>
-              <section class="asg-settings-section">
-                <div class="asg-settings-title">检测与切换</div>
+              </details>
+              <details class="asg-settings-section" data-setting-group="detection-switching">
+                <summary class="asg-settings-summary"><span class="asg-settings-title">检测与切换</span><span class="asg-settings-inline-label">稳定性、间隔、冷却</span></summary>
                 <div class="asg-settings-grid">
                   <label>连续通过次数<input type="number" min="1" max="5" step="1" data-setting="consecutiveChecks"></label>
                   <label>检测间隔（秒）<input type="number" min="10" max="3600" step="1" data-setting="pollIntervalSeconds"></label>
                   <label class="asg-setting-wide">切换冷却（分钟）<input type="number" min="0" max="1440" step="0.1" data-setting="cooldownMinutes"><span class="asg-setting-preview" data-field="cooldown-preview" aria-live="polite"></span></label>
                 </div>
-              </section>
-              <section class="asg-settings-section">
-                <div class="asg-settings-head"><div class="asg-settings-title">倍率上限策略</div><label class="asg-settings-inline-label" for="asg-balance-max-setting">允许切换的最高倍率</label></div>
+              </details>
+              <details class="asg-settings-section" data-setting-group="multiplier"${this.config.mode === 'balance' || this.config.mode === 'smart' ? ' open' : ''}>
+                <summary class="asg-settings-summary"><span class="asg-settings-title">倍率上限策略</span><span class="asg-settings-inline-label">平衡与智能模式</span></summary>
                 <div class="asg-settings-grid">
-                  <label class="asg-balance-setting"><input id="asg-balance-max-setting" type="number" min="0" max="1000" step="0.001" data-setting="balanceMaxPrice" aria-label="允许切换的最高倍率"><span class="asg-balance-preview" data-field="balance-preview" aria-live="polite"></span></label>
+                  <label class="asg-balance-setting" for="asg-balance-max-setting">允许切换的最高倍率<input id="asg-balance-max-setting" type="number" min="0" max="1000" step="0.001" data-setting="balanceMaxPrice"><span class="asg-balance-preview" data-field="balance-preview" aria-live="polite"></span></label>
                 </div>
-              </section>
-              <button class="asg-save" data-action="save-settings">保存设置</button>
+              </details>
               </div>
+              <div class="asg-settings-footer"><span class="asg-unsaved" data-field="settings-dirty" aria-live="polite">所有设置已保存</span><button class="asg-save" data-action="save-settings">保存设置</button></div>
             </section>
             <section class="asg-side-view" id="asg-logs-view" role="tabpanel" aria-labelledby="asg-logs-tab" data-panel-view="logs" hidden>
               <div class="asg-log-actions"><button data-action="clear-logs">清空日志</button></div>
@@ -1546,9 +1570,16 @@
         if (action === 'switch') this.switchToRecommendation(false);
         if (action === 'save-settings') this.saveSettings();
         if (action === 'clear-logs') this.clearLogs();
-        if (action === 'locate-provider') {
-          const button = event.target.closest('[data-action="locate-provider"]');
+        if (action === 'locate-provider-icon') {
+          event.preventDefault();
+          event.stopPropagation();
+          const button = event.target.closest('[data-action="locate-provider-icon"]');
           this.navigateToProviderCandidate(button?.dataset.groupName);
+          return;
+        }
+        if (action === 'locate-provider') {
+          const row = event.target.closest('[data-action="locate-provider"]');
+          this.navigateToProviderCandidate(row?.dataset.groupName);
         }
       });
       this.panel.querySelector('[role="tablist"]').addEventListener('keydown', (event) => {
@@ -1577,6 +1608,11 @@
       this.panel.querySelector('[data-field="mode"]').addEventListener('change', (event) => {
         this.config.mode = normalizeGroupMode(event.target.value);
         storageSet('config', this.config);
+        if (this.config.mode === 'balance' || this.config.mode === 'smart') {
+          const multiplierGroup = this.panel.querySelector('[data-setting-group="multiplier"]');
+          if (multiplierGroup) multiplierGroup.open = true;
+        }
+        this.renderActiveFilters();
         this.log('info', `模式改为${GROUP_MODE_LABELS[this.config.mode]}`);
         this.refresh();
       });
@@ -1596,8 +1632,8 @@
       this.panel.addEventListener('change', (event) => {
         if (event.target.matches('[data-setting="availabilityMode"]')) {
           this.syncAvailabilityInputs();
-          this.renderSettingsPreviews();
         }
+        if (event.target.matches('[data-setting]')) this.renderSettingsPreviews();
       });
     }
 
@@ -1648,6 +1684,7 @@
       this.panel.querySelector('[data-field="mode"]').value = this.config.mode;
       this.syncAvailabilityInputs();
       this.renderSettingsPreviews();
+      this.renderActiveFilters();
     }
 
     syncAvailabilityInputs() {
@@ -1669,6 +1706,41 @@
       this.renderBalancePreview();
       this.renderExcludedPreview();
       this.renderCooldownPreview();
+      this.renderSettingsDirtyState();
+    }
+
+    renderSettingsDirtyState() {
+      const indicator = this.panel?.querySelector('[data-field="settings-dirty"]');
+      if (!indicator) return;
+      const dirty = [...this.panel.querySelectorAll('[data-setting]')].some((input) => {
+        const saved = input.type === 'checkbox' ? this.config[input.dataset.setting] === true : String(this.config[input.dataset.setting]);
+        const draft = input.type === 'checkbox' ? input.checked : input.value;
+        return draft !== saved;
+      });
+      indicator.textContent = dirty ? '有未保存更改' : '所有设置已保存';
+      indicator.classList.toggle('asg-preview-pending', dirty);
+    }
+
+    renderActiveFilters() {
+      const container = this.panel?.querySelector('[data-field="active-filters"]');
+      if (!container) return;
+      const availability = this.config.availabilityMode === 'successes'
+        ? `成功点 ≥ ${this.config.minSuccessPoints10m}`
+        : this.config.availabilityMode === 'consecutive'
+          ? `连续成功 ≥ ${this.config.minConsecutiveSuccesses10m}`
+          : `可用率 ≥ ${formatPercent(this.config.minSuccess10m)}`;
+      const labels = [availability];
+      if (this.config.requireNoWarnings) labels.push('无监控警告');
+      if (this.config.targetModel !== 'any') labels.push(`目标 ${this.config.targetModel[0].toUpperCase()}${this.config.targetModel.slice(1)}`);
+      if (this.config.modelDetectionPolicy !== 'observe') labels.push(`${this.config.modelDetectionPolicy === 'strict' ? '严格' : '标准'}检测`);
+      if (this.config.minCacheHitRate > 0) labels.push(`缓存 ≥ ${this.config.minCacheHitRate}`);
+      if (this.config.mode === 'balance' || this.config.mode === 'smart') labels.push(`倍率 ≤ ${formatMultiplier(this.config.balanceMaxPrice)}`);
+      container.replaceChildren(...labels.map((label) => {
+        const chip = document.createElement('span');
+        chip.className = 'asg-filter-chip';
+        chip.textContent = label;
+        return chip;
+      }));
     }
 
     renderBalancePreview() {
@@ -2006,8 +2078,14 @@
           : '没有符合当前可靠性条件的分组';
         recommend.appendChild(empty);
       } else {
+        const titleRow = document.createElement('div');
+        titleRow.className = 'asg-recommend-title';
+        const mode = document.createElement('span');
+        mode.textContent = `${GROUP_MODE_LABELS[this.config.mode]}推荐`;
         const title = document.createElement('strong');
-        title.textContent = `${GROUP_MODE_LABELS[this.config.mode]}模式 · ${winner.name} · ${winner.price}x`;
+        title.textContent = winner.name;
+        title.title = winner.name;
+        titleRow.append(mode, title);
         const metrics = document.createElement('div');
         metrics.className = 'asg-metrics';
         const availabilityText = this.config.availabilityMode === 'successes'
@@ -2015,15 +2093,36 @@
           : this.config.availabilityMode === 'consecutive'
             ? `连续成功 ${winner.recentConsecutiveSuccessCount || 0} 点`
             : `可用率 ${formatPercent(winner.success10m)}`;
-        metrics.textContent = `10m ${availabilityText} · ${winner.recentSampleCount}次探测 · 首Token ${formatLatency(winner.latency)}${this.config.mode === 'smart' ? ` · 综合评分 ${formatSmartScore(winner.smartScore)}` : ''}${this.stability.stable ? ' · 已稳定' : ` · ${this.stability.count}/${this.config.consecutiveChecks} 次`}`;
-        recommend.append(title, metrics, renderProviderSignals(winner), renderAvailabilityChart(this.monitorSeries, winner.id, winner.name));
+        const metricItems = [
+          { text: formatMultiplier(winner.price), strong: true },
+          { text: `10m ${availabilityText}` },
+          { text: `TTFT ${formatLatency(winner.latency)}` },
+        ];
+        if (this.config.mode === 'smart') metricItems.push({ text: `评分 ${formatSmartScore(winner.smartScore)}` });
+        metricItems.push({ text: this.stability.stable ? '已稳定' : `稳定性 ${this.stability.count}/${this.config.consecutiveChecks}` });
+        for (const metric of metricItems) {
+          const item = document.createElement('span');
+          if (metric.strong) item.className = 'asg-metric-strong';
+          item.textContent = metric.text;
+          metrics.appendChild(item);
+        }
+        recommend.append(titleRow, metrics);
+      }
+      const details = document.createElement('details');
+      details.className = 'asg-recommend-details';
+      const detailsSummary = document.createElement('summary');
+      detailsSummary.textContent = '完整信号与诊断';
+      const detailsBody = document.createElement('div');
+      detailsBody.className = 'asg-recommend-detail-body';
+      if (winner) {
+        detailsBody.append(renderProviderSignals(winner), renderAvailabilityChart(this.monitorSeries, winner.id, winner.name));
         if (this.config.mode === 'balance' || this.config.mode === 'smart') {
           const reason = document.createElement('div');
           reason.className = 'asg-balance-reason';
           reason.textContent = this.config.mode === 'smart'
             ? `倍率上限 ${formatMultiplier(this.config.balanceMaxPrice)} · 范围内综合评分最高`
             : `倍率上限 ${formatMultiplier(this.config.balanceMaxPrice)} · 范围内首 Token 最快`;
-          recommend.appendChild(reason);
+          detailsBody.appendChild(reason);
         }
       }
       const diagnostics = this.candidateDiagnostics?.counts || {};
@@ -2031,7 +2130,9 @@
       diagnostic.className = 'asg-recommend-meta';
       const overLimit = this.config.mode === 'balance' || this.config.mode === 'smart' ? Math.max(0, Number(diagnostics.eligible || 0) - this.ranked.length) : 0;
       diagnostic.textContent = `参与比较 ${this.ranked.length} · 排除关键词 ${diagnostics.keywords || 0} · 不可用 ${diagnostics.unavailable || 0} · 可用率不足 ${diagnostics.lowSuccess || 0} · 监控警告 ${diagnostics.warnings || 0} · 模型健康 ${diagnostics.modelHealth || 0} · 模型检测 ${diagnostics.modelDetection || 0} · 缓存不足 ${diagnostics.cache || 0}${overLimit ? ` · 超过倍率上限 ${overLimit}` : ''}`;
-      recommend.appendChild(diagnostic);
+      detailsBody.appendChild(diagnostic);
+      details.append(detailsSummary, detailsBody);
+      recommend.appendChild(details);
       const freshness = document.createElement('div');
       freshness.className = `asg-monitor-age${this.monitorFreshness.stale ? ' asg-stale' : ''}`;
       freshness.dataset.field = 'monitor-freshness';
@@ -2039,6 +2140,7 @@
         ? `监控数据已过期（${this.monitorFreshness.label}），切换已暂停`
         : `数据更新于 ${this.monitorFreshness.label}`;
       recommend.appendChild(freshness);
+      this.renderActiveFilters();
       this.renderBalance();
       const keyInfo = this.authError || (this.keyCount !== null ? `已读取 ${this.keyCount} 个密钥` : '');
       this.setStatus(this.error || keyInfo || (this.lastUpdated ? `最近检测：${this.lastUpdated.toLocaleTimeString()}` : '准备检测'), Boolean(this.error || this.authError));
@@ -2096,6 +2198,8 @@
     renderCandidates() {
       const list = this.panel.querySelector('[data-field="list"]');
       const rule = this.panel.querySelector('[data-field="ranking-rule"]');
+      const ranking = this.panel.querySelector('.asg-ranking');
+      ranking.dataset.smart = String(this.config.mode === 'smart');
       list.replaceChildren();
       rule.textContent = `${getCandidateRankingRule(this.config)} · ${this.ranked.length} 个候选`;
       if (!this.ranked.length) {
@@ -2109,18 +2213,18 @@
         const candidate = this.ranked[index];
         const item = document.createElement('li');
         if (index === 0) item.className = 'asg-candidate-best';
-        const locate = document.createElement('button');
-        locate.type = 'button';
-        locate.className = 'asg-candidate-locate';
-        locate.dataset.action = 'locate-provider';
-        locate.dataset.groupName = candidate.name;
-        locate.title = `在供应商大厅定位 ${candidate.name}`;
-        locate.setAttribute('aria-label', `在供应商大厅定位 ${candidate.name}`);
+        const hitbox = document.createElement('button');
+        hitbox.type = 'button';
+        hitbox.className = 'asg-candidate-hitbox';
+        hitbox.dataset.action = 'locate-provider';
+        hitbox.dataset.groupName = candidate.name;
+        hitbox.title = `在供应商大厅定位 ${candidate.name}`;
+        hitbox.setAttribute('aria-label', `打开 ${candidate.name} 的供应商位置`);
+        const row = document.createElement('div');
+        row.className = 'asg-candidate-row';
         const rank = document.createElement('span');
         rank.className = 'asg-candidate-rank';
         rank.textContent = `#${index + 1}`;
-        const main = document.createElement('div');
-        main.className = 'asg-candidate-main';
         const nameRow = document.createElement('div');
         nameRow.className = 'asg-candidate-name-row';
         const name = document.createElement('span');
@@ -2134,31 +2238,34 @@
           badge.textContent = '当前推荐';
           nameRow.appendChild(badge);
         }
-        const detail = document.createElement('div');
-        detail.className = 'asg-candidate-detail';
-        detail.textContent = this.config.availabilityMode === 'successes'
-          ? `10m 成功 ${candidate.recentSuccessCount || 0}/${candidate.recentSampleCount || 0} 点`
-          : this.config.availabilityMode === 'consecutive'
-            ? `10m 连续成功 ${candidate.recentConsecutiveSuccessCount || 0} 点`
-            : `10m 可用率 ${formatPercent(candidate.success10m)}`;
-        main.append(nameRow, detail, renderProviderSignals(candidate, true));
-        const metrics = document.createElement('div');
-        metrics.className = 'asg-candidate-metrics';
         const price = document.createElement('span');
-        price.className = 'asg-candidate-price';
+        price.className = 'asg-candidate-cell asg-candidate-price';
         price.textContent = formatMultiplier(candidate.price);
         const latency = document.createElement('span');
-        latency.className = 'asg-candidate-latency';
-        latency.textContent = `首 Token ${formatLatency(candidate.latency)}`;
-        metrics.append(price, latency);
-        if (this.config.mode === 'smart') {
-          const score = document.createElement('span');
-          score.className = 'asg-candidate-score';
-          score.textContent = `评分 ${formatSmartScore(candidate.smartScore)}`;
-          metrics.appendChild(score);
-        }
-        locate.append(rank, main, metrics);
-        item.appendChild(locate);
+        latency.className = 'asg-candidate-cell asg-candidate-latency';
+        latency.textContent = formatLatency(candidate.latency);
+        const availability = document.createElement('span');
+        availability.className = 'asg-candidate-cell asg-candidate-availability';
+        availability.textContent = this.config.availabilityMode === 'successes'
+          ? `${candidate.recentSuccessCount || 0}/${candidate.recentSampleCount || 0} 点`
+          : this.config.availabilityMode === 'consecutive'
+            ? `${candidate.recentConsecutiveSuccessCount || 0} 连续`
+            : formatPercent(candidate.success10m);
+        const score = document.createElement('span');
+        score.className = 'asg-candidate-cell asg-candidate-score asg-candidate-score-column';
+        score.textContent = this.config.mode === 'smart' ? formatSmartScore(candidate.smartScore) : '';
+        const locateSlot = document.createElement('span');
+        locateSlot.className = 'asg-candidate-go-slot';
+        const locate = document.createElement('button');
+        locate.type = 'button';
+        locate.className = 'asg-candidate-go';
+        locate.dataset.action = 'locate-provider-icon';
+        locate.dataset.groupName = candidate.name;
+        locate.textContent = '↗';
+        locate.title = `定位 ${candidate.name}`;
+        locate.setAttribute('aria-label', `在供应商大厅定位 ${candidate.name}`);
+        row.append(rank, nameRow, price, latency, availability, score, locateSlot);
+        item.append(hitbox, row, locate);
         list.appendChild(item);
       }
     }

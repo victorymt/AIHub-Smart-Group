@@ -10,7 +10,7 @@ test('hides inactive availability settings despite the shared label display rule
   assert.match(userscriptSource, /\[data-availability-setting\]\[hidden\]\{display:none !important\}/);
 });
 
-test('stacks narrow-screen panel sections without unbounding the candidate list', () => {
+test('uses a near-full-width mobile workbench with independently scrolling views', () => {
   const mediaStart = userscriptSource.indexOf('@media (max-width:759px){');
   const styleEnd = userscriptSource.indexOf('const USAGE_STYLE', mediaStart);
 
@@ -18,17 +18,18 @@ test('stacks narrow-screen panel sections without unbounding the candidate list'
   assert.notEqual(styleEnd, -1);
 
   const mobileStyles = userscriptSource.slice(mediaStart, styleEnd);
-  assert.match(mobileStyles, /#\$\{ROOT_ID\},#\$\{ROOT_ID\}\[data-side-open=true\]\{width:min\(360px,calc\(100vw - 32px\)\)\}/);
-  assert.match(mobileStyles, /\.asg-body\{\s*display:flex;\s*flex-direction:column;\s*overflow:auto;/);
-  assert.match(mobileStyles, /\.asg-main-column,\s*#\$\{ROOT_ID\} \.asg-side-column\{\s*flex:0 0 auto;\s*min-height:auto;\s*overflow:visible;/);
-  assert.match(mobileStyles, /\.asg-side-head\{\s*position:static;\s*top:auto;\s*z-index:auto;/);
-  assert.doesNotMatch(mobileStyles, /\.asg-body\{[^}]*grid-template-columns/);
+  assert.match(mobileStyles, /#\$\{ROOT_ID\},#\$\{ROOT_ID\}\[data-side-open=true\]\{[^}]*width:calc\(100vw - 16px\);[^}]*max-height:90vh/);
+  assert.match(mobileStyles, /\.asg-body\{display:block;overflow:hidden\}/);
+  assert.match(mobileStyles, /\.asg-main-column,#\$\{ROOT_ID\} \.asg-side-column\{height:100%;overflow:auto;/);
+  assert.match(mobileStyles, /\[data-side-open=true\] \.asg-main-column\{display:none\}/);
+  assert.match(mobileStyles, /\.asg-actions\{position:sticky;bottom:-14px/);
+  assert.match(mobileStyles, /\.asg-candidate-row\{grid-template-areas:"rank name price locate" "\. latency availability score";min-height:64px/);
   assert.doesNotMatch(mobileStyles, /\.asg-list\{max-height:none\}/);
 });
 
 test('keeps the desktop side panel collapsed until a header tab opens it', () => {
   assert.match(userscriptSource, /width:min\(480px,calc\(100vw - 32px\)\)/);
-  assert.match(userscriptSource, /\[data-side-open=true\]\{width:min\(820px,calc\(100vw - 32px\)\)\}/);
+  assert.match(userscriptSource, /\[data-side-open=true\]\{width:min\(840px,calc\(100vw - 32px\)\)\}/);
   assert.match(userscriptSource, /<aside class="asg-side-column"[^>]* hidden>/);
   assert.match(userscriptSource, /data-panel-tab="settings">设置<\/button>/);
   assert.match(userscriptSource, /data-panel-tab="logs">日志<\/button>/);
@@ -41,11 +42,28 @@ test('wires the native key group dropdown enhancer through the app router', () =
   assert.match(userscriptSource, /input\[placeholder="搜索分组\.\.\."\]/);
 });
 
-test('renders the full candidate ranking as a labeled ordered list', () => {
+test('renders the full candidate ranking as compact locatable table rows', () => {
   assert.match(userscriptSource, /<span class="asg-ranking-title"[^>]*>推荐排序<\/span>/);
-  assert.match(userscriptSource, /<ol class="asg-list" data-field="list"><\/ol>/);
+  assert.match(userscriptSource, /class="asg-candidate-table-head" role="row"/);
+  assert.match(userscriptSource, /<ol class="asg-list" data-field="list" role="rowgroup"><\/ol>/);
   assert.doesNotMatch(userscriptSource, /this\.ranked\.slice\(0,\s*5\)/);
-  assert.match(userscriptSource, /locate\.dataset\.action = 'locate-provider'/);
+  assert.match(userscriptSource, /hitbox\.dataset\.action = 'locate-provider'/);
+  assert.match(userscriptSource, /locate\.dataset\.action = 'locate-provider-icon'/);
+  assert.match(userscriptSource, /event\.stopPropagation\(\)/);
+  assert.match(userscriptSource, /className = 'asg-candidate-hitbox'/);
+  assert.match(userscriptSource, /\.asg-ranking:not\(\[data-smart=true\]\) \.asg-candidate-score-column\{display:none\}/);
+});
+
+test('collapses secondary diagnostics and settings while keeping save state visible', () => {
+  assert.match(userscriptSource, /details\.className = 'asg-recommend-details'/);
+  assert.match(userscriptSource, /detailsSummary\.textContent = '完整信号与诊断'/);
+  assert.match(userscriptSource, /data-setting-group="reliability" open/);
+  assert.match(userscriptSource, /data-setting-group="model-cache"/);
+  assert.match(userscriptSource, /data-setting-group="detection-switching"/);
+  assert.match(userscriptSource, /class="asg-settings-footer"/);
+  assert.match(userscriptSource, /data-field="settings-dirty"/);
+  assert.match(userscriptSource, /\.asg-settings-footer\{position:sticky/);
+  assert.doesNotMatch(userscriptSource, /<details class="asg-guide">/);
 });
 
 test('finds a provider row by its complete normalized group name', () => {
@@ -112,7 +130,8 @@ test('uses the updated provider endpoints and renders the new provider signals',
   assert.match(userscriptSource, /apiRequest\('\/public\/providers'\)/);
   assert.match(userscriptSource, /apiRequest\('\/public\/providers\/series\?range=6h'\)/);
   assert.match(userscriptSource, /renderProviderSignals\(winner\)/);
-  assert.match(userscriptSource, /renderProviderSignals\(candidate, true\)/);
+  assert.match(userscriptSource, /asg-recommend-details/);
+  assert.doesNotMatch(userscriptSource, /renderProviderSignals\(candidate, true\)/);
   assert.match(userscriptSource, /\.decision-entry\.asg-provider-locate-target/);
 });
 
@@ -121,8 +140,10 @@ test('renders smart mode and model-aware filter settings', () => {
   assert.match(userscriptSource, /data-setting="targetModel"/);
   assert.match(userscriptSource, /data-setting="modelDetectionPolicy"/);
   assert.match(userscriptSource, /data-setting="minCacheHitRate"/);
-  assert.match(userscriptSource, /综合评分 \$\{formatSmartScore\(winner\.smartScore\)\}/);
-  assert.match(userscriptSource, /评分 \$\{formatSmartScore\(candidate\.smartScore\)\}/);
+  assert.match(userscriptSource, /评分 \$\{formatSmartScore\(winner\.smartScore\)\}/);
+  assert.match(userscriptSource, /formatSmartScore\(candidate\.smartScore\)/);
+  assert.match(userscriptSource, /labels\.push\(`目标 \$\{this\.config\.targetModel/);
+  assert.match(userscriptSource, /labels\.push\(`缓存 ≥ \$\{this\.config\.minCacheHitRate\}`\)/);
 });
 
 test('accepts only unexpired provider location targets', () => {
