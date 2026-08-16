@@ -2,7 +2,7 @@
 // @name         AIHub Smart Group
 // @name:zh-CN   AIHub 智能分组
 // @namespace    local.aihub.smart-group
-// @version      0.5.11
+// @version      0.6.0
 // @description  Recommend reliable low-cost groups on AIHub.
 // @description:zh-CN 按价格、速度和可用性推荐 AIHub 分组
 // @license      MIT
@@ -28,7 +28,7 @@
 
   const ROOT_ID = 'aihub-smart-group-panel';
   const TOGGLE_ID = 'aihub-smart-group-toggle';
-  const SCRIPT_VERSION = '0.5.11';
+  const SCRIPT_VERSION = '0.6.0';
   const STORAGE_PREFIX = 'aihub-smart-group:';
   const PENDING_PROVIDER_GROUP_KEY = `${STORAGE_PREFIX}pending-provider-group`;
   const AVAILABILITY_CHART_RANGE_MS = 6 * 60 * 60 * 1000;
@@ -127,6 +127,72 @@
       : '暂无数据';
   }
 
+  function normalizeCacheHitRate(value) {
+    if (value == null || value === '') return null;
+    const text = String(value).trim();
+    const match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*(%)?$/);
+    if (!match) return null;
+    const number = Number(match[1]);
+    if (!Number.isFinite(number) || number < 0) return null;
+    return clamp((match[2] || number > 1) ? number / 100 : number, 0, 1);
+  }
+
+  function formatCacheHitRate(value) {
+    const rate = normalizeCacheHitRate(value);
+    return rate === null ? '缓存暂无数据' : `缓存 ${formatPercent(rate)}`;
+  }
+
+  function getModelHealthInfo(value) {
+    const source = value && typeof value === 'object' ? value : null;
+    if (!source) return { label: '模型状态未知', tone: 'muted' };
+    const labels = { sol: 'Sol', terra: 'Terra', luna: 'Luna' };
+    const groups = { healthy: [], failed: [], insufficient: [] };
+    for (const key of Object.keys(labels)) {
+      const status = String(source[key] || 'insufficient').toLocaleLowerCase();
+      (groups[status] || groups.insufficient).push(labels[key]);
+    }
+    const parts = [];
+    if (groups.healthy.length) parts.push(`${groups.healthy.join('/')} 健康`);
+    if (groups.failed.length) parts.push(`${groups.failed.join('/')} 异常`);
+    if (groups.insufficient.length) parts.push(`${groups.insufficient.join('/')} 未知`);
+    const tone = groups.healthy.length === 3 ? 'good' : groups.healthy.length ? 'warning' : groups.failed.length ? 'bad' : 'muted';
+    return { label: parts.join(' · '), tone };
+  }
+
+  function getModelDetectionInfo(value) {
+    if (value?.applicable === false) return { status: 'not_applicable', label: '模型检测不适用', tone: 'muted' };
+    const status = String(value?.status || 'not_tested').toLocaleLowerCase();
+    const labels = {
+      passed: '检测通过',
+      juice_passed: 'Juice 检测通过',
+      suspected: '模型存疑',
+      insufficient_evidence: '检测证据不足',
+      detection_failed: '模型检测失败',
+      not_tested: '未进行模型检测',
+      not_configured: '模型检测未配置',
+      queued: '模型检测排队中',
+      creating: '模型检测排队中',
+      running: '模型检测中',
+    };
+    const tone = status === 'passed' || status === 'juice_passed'
+      ? 'good'
+      : status === 'detection_failed'
+        ? 'bad'
+        : status === 'suspected' || status === 'insufficient_evidence'
+          ? 'warning'
+          : 'muted';
+    return { status, label: labels[status] || `模型检测：${status}`, tone };
+  }
+
+  function getProviderSignalSummary(row) {
+    const cacheHitRate = normalizeCacheHitRate(row?.cacheHitRate ?? row?.cache_hit_rate);
+    return [
+      { label: formatCacheHitRate(cacheHitRate), tone: cacheHitRate === null ? 'muted' : 'info' },
+      getModelHealthInfo(row?.modelHealth ?? row?.model_health),
+      getModelDetectionInfo(row?.modelDetection ?? row?.model_detection),
+    ];
+  }
+
   function getExcludedGroupInfo(rows, keywordInput) {
     const keywords = normalizeExcludedGroupKeywords(keywordInput).split('|').filter(Boolean);
     const matches = [];
@@ -156,7 +222,7 @@
         counts.invalid += 1;
         continue;
       }
-      if (row.enabled === false || row.available !== true) {
+      if (row.enabled === false || row.visibleInHall === false || row.available !== true) {
         counts.unavailable += 1;
         continue;
       }
@@ -231,8 +297,8 @@
     if (!root || typeof root.querySelectorAll !== 'function') return null;
     const targetName = normalizeGroupName(groupName);
     if (!targetName) return null;
-    for (const row of root.querySelectorAll('.monitor-api-row:not(.monitor-api-head)')) {
-      const name = row.querySelector?.('.monitor-plan-cell')?.textContent;
+    for (const row of root.querySelectorAll('.decision-entry, .monitor-api-row:not(.monitor-api-head)')) {
+      const name = row.querySelector?.('.group-cell strong, .monitor-plan-cell')?.textContent;
       if (normalizeGroupName(name) === targetName) return row;
     }
     return null;
@@ -240,11 +306,17 @@
 
   function findProviderRefreshButton(root) {
     if (!root || typeof root.querySelector !== 'function') return null;
-    return root.querySelector('.monitor-refresh-button');
+    const legacyButton = root.querySelector('.monitor-refresh-button');
+    if (legacyButton) return legacyButton;
+    if (typeof root.querySelectorAll !== 'function') return null;
+    return [...root.querySelectorAll('button.monitor-icon-button')].find((button) => {
+      const label = `${button?.title || ''} ${button?.getAttribute?.('aria-label') || ''} ${button?.textContent || ''}`;
+      return /刷新|refresh/i.test(label);
+    }) || null;
   }
 
   function isProviderRefreshButtonBusy(button) {
-    return Boolean(button?.disabled || /刷新中|检测中/.test(String(button?.textContent || '')));
+    return Boolean(button?.disabled || button?.querySelector?.('.animate-spin') || /刷新中|检测中|refreshing/i.test(String(button?.textContent || '')));
   }
 
   function parsePendingProviderLocation(value, now = Date.now()) {
@@ -775,12 +847,108 @@
     return payload;
   }
 
+  function normalizeProviderRow(row) {
+    const source = row && typeof row === 'object' ? row : {};
+    const rawSuccessRates = source.successRates ?? source.success_rates ?? {};
+    const fallbackSuccessRate = Number(source.sla);
+    const successRates = {};
+    for (const range of ['5m', '6h', '24h', '7d', '30d']) {
+      const value = Number(rawSuccessRates?.[range]);
+      successRates[range] = Number.isFinite(value)
+        ? value
+        : (Number.isFinite(fallbackSuccessRate) ? fallbackSuccessRate : Number.NaN);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawSuccessRates, '10m')) successRates['10m'] = Number(rawSuccessRates['10m']);
+
+    const groupId = Number(source.group_id ?? source.groupId);
+    const rawCacheHitRate = source.cacheHitRate ?? source.cache_hit_rate;
+    return {
+      ...source,
+      id: String(source.id ?? (Number.isFinite(groupId) ? groupId : '')),
+      group_id: groupId,
+      planType: String(source.planType ?? source.code ?? source.name ?? '').trim(),
+      priceMultiplier: Number(source.priceMultiplier ?? source.rate_multiplier),
+      enabled: source.enabled !== false,
+      available: source.available === true,
+      visibleInHall: source.visibleInHall ?? source.visible_in_hall ?? source.available === true,
+      firstTokenLatencyMs: nonNegativeNumberOrNull(source.firstTokenLatencyMs ?? source.probe_ttft_ms ?? source.avg_ttft_ms),
+      successRates,
+      checkedAt: source.checkedAt ?? source.last_probed_at ?? null,
+      warningReasons: Array.isArray(source.warningReasons) ? source.warningReasons : [],
+      cacheHitRate: normalizeCacheHitRate(rawCacheHitRate),
+      cacheHitRateText: typeof rawCacheHitRate === 'string' ? rawCacheHitRate : formatCacheHitRate(rawCacheHitRate).replace(/^缓存\s*/, ''),
+      modelHealth: source.modelHealth ?? source.model_health ?? null,
+      modelDetection: source.modelDetection ?? source.model_detection ?? null,
+      responseValid: source.responseValid ?? source.response_valid ?? null,
+      probeTTFTMs: nonNegativeNumberOrNull(source.probe_ttft_ms ?? source.firstTokenLatencyMs),
+      userAverageTTFTMs: nonNegativeNumberOrNull(source.user_avg_ttft_ms),
+      userSampleCount: nonNegativeNumberOrNull(source.user_sample_count),
+      userHasData: source.user_has_data === true,
+    };
+  }
+
+  function normalizeProviderSummary(payload) {
+    const data = payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, 'data')
+      ? payload.data
+      : payload;
+    const items = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(payload?.apis)
+          ? payload.apis
+          : [];
+    return {
+      generatedAt: data?.generated_at ?? data?.generatedAt ?? payload?.generated_at ?? payload?.generatedAt ?? null,
+      monitoringActive: payload?.monitoringActive ?? true,
+      apis: items.map(normalizeProviderRow),
+    };
+  }
+
+  function normalizeProviderSeries(payload) {
+    const data = payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, 'data')
+      ? payload.data
+      : payload;
+    if (data?.seriesByApiId && typeof data.seriesByApiId === 'object') {
+      return {
+        generatedAt: data.generatedAt ?? null,
+        range: data.range ?? '6h',
+        seriesByApiId: data.seriesByApiId,
+        userTTFTByApiId: data.userTTFTByApiId ?? {},
+      };
+    }
+    const seriesByApiId = {};
+    const userTTFTByApiId = {};
+    for (const item of Array.isArray(data?.items) ? data.items : []) {
+      const id = String(item?.group_id ?? '');
+      if (!id) continue;
+      seriesByApiId[id] = Array.isArray(item.probe) ? item.probe : [];
+      userTTFTByApiId[id] = Array.isArray(item.user_ttft) ? item.user_ttft : [];
+    }
+    return {
+      generatedAt: data?.generated_at ?? data?.generatedAt ?? null,
+      range: data?.range ?? '6h',
+      seriesByApiId,
+      userTTFTByApiId,
+    };
+  }
+
   async function fetchMonitorSummary() {
-    return apiRequest('/public/monitor/summary');
+    try {
+      return normalizeProviderSummary(await apiRequest('/public/providers'));
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      return normalizeProviderSummary(await apiRequest('/public/monitor/summary'));
+    }
   }
 
   async function fetchMonitorSeries() {
-    return apiRequest('/public/monitor/series/6h');
+    try {
+      return normalizeProviderSeries(await apiRequest('/public/providers/series?range=6h'));
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      return normalizeProviderSeries(await apiRequest('/public/monitor/series/6h'));
+    }
   }
 
   async function fetchCurrentBalance() {
@@ -845,6 +1013,14 @@
     #${ROOT_ID} .asg-recommend strong{font-size:15px;line-height:1.35}
     #${ROOT_ID} .asg-muted{color:#667085}
     #${ROOT_ID} .asg-metrics{display:flex;flex-wrap:wrap;gap:6px 12px;color:#475467;font-size:12px;margin-top:4px}
+    #${ROOT_ID} .asg-provider-signals,#${ROOT_ID} .asg-candidate-signals{display:flex;align-items:center;gap:4px 10px;min-width:0;margin-top:5px;overflow:hidden}
+    #${ROOT_ID} .asg-provider-signals{flex-wrap:wrap}
+    #${ROOT_ID} .asg-provider-signal{flex:none;font-size:10px;font-weight:600;white-space:nowrap}
+    #${ROOT_ID} .asg-signal-good{color:#067647}
+    #${ROOT_ID} .asg-signal-info{color:#175cd3}
+    #${ROOT_ID} .asg-signal-warning{color:#b54708}
+    #${ROOT_ID} .asg-signal-bad{color:#b42318}
+    #${ROOT_ID} .asg-signal-muted{color:#667085}
     #${ROOT_ID} .asg-availability-chart{margin-top:8px;padding-top:7px;border-top:1px solid #dce6f7}
     #${ROOT_ID} .asg-availability-head,#${ROOT_ID} .asg-availability-axis{display:flex;align-items:center;justify-content:space-between;gap:8px}
     #${ROOT_ID} .asg-availability-title{color:#344054;font-size:11px;font-weight:600}
@@ -921,6 +1097,8 @@
     #${ROOT_ID} .asg-candidate-name{min-width:0;overflow:hidden;color:#344054;font-size:12px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
     #${ROOT_ID} .asg-candidate-badge{flex:none;color:#1456d9;font-size:10px;font-weight:600;white-space:nowrap}
     #${ROOT_ID} .asg-candidate-detail{margin-top:1px;overflow:hidden;color:#667085;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+    #${ROOT_ID} .asg-candidate-signals{margin-top:1px;text-overflow:ellipsis;white-space:nowrap}
+    #${ROOT_ID} .asg-candidate-signals .asg-provider-signal{font-size:9px}
     #${ROOT_ID} .asg-candidate-metrics{text-align:right;white-space:nowrap}
     #${ROOT_ID} .asg-candidate-price{display:block;color:#15803d;font-size:12px;font-weight:700}
     #${ROOT_ID} .asg-candidate-latency{display:block;margin-top:1px;color:#475467;font-size:10px}
@@ -949,10 +1127,19 @@
     .dark #${ROOT_ID} .asg-save:hover:not(:disabled){background:#2e6fe8;border-color:#2e6fe8}
     .dark #${ROOT_ID} .asg-error{color:#fda29b;background:rgba(180,35,24,.18);border-color:#912018}
     .dark #${ROOT_ID} .asg-status.asg-error{background:transparent;border-color:transparent}
+    .dark #${ROOT_ID} .asg-signal-good{color:#6ce9a6}
+    .dark #${ROOT_ID} .asg-signal-info{color:#84adff}
+    .dark #${ROOT_ID} .asg-signal-warning{color:#fec84b}
+    .dark #${ROOT_ID} .asg-signal-bad{color:#fda29b}
+    .dark #${ROOT_ID} .asg-signal-muted{color:#98a2b3}
     .dark #${ROOT_ID} .asg-availability-guide{stroke:#475467}
     .dark #${ROOT_ID} .asg-availability-line{stroke:#98a2b3}
     .monitor-api-row.asg-provider-locate-target{background:#eaf1ff!important;outline:2px solid #1456d9;outline-offset:-2px}
+    .decision-entry.asg-provider-locate-target{outline:2px solid #1456d9;outline-offset:-2px}
+    .decision-entry.asg-provider-locate-target>.decision-row{background:#eaf1ff!important}
     .dark .monitor-api-row.asg-provider-locate-target{background:rgba(20,86,217,.18)!important;outline-color:#60a5fa}
+    .dark .decision-entry.asg-provider-locate-target{outline-color:#60a5fa}
+    .dark .decision-entry.asg-provider-locate-target>.decision-row{background:rgba(20,86,217,.18)!important}
     #${TOGGLE_ID}{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));z-index:2147483647;width:44px;height:44px;padding:0;border:1px solid #1456d9;border-radius:50%;background:#1456d9;color:#fff;box-shadow:0 8px 24px rgba(16,24,40,.2);font:700 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
     #${TOGGLE_ID}[hidden]{display:none}
     #${TOGGLE_ID}:hover{background:#0f46b6}
@@ -1038,6 +1225,20 @@
 
   function formatLatency(value) {
     return Number.isFinite(value) ? `${Math.round(value)} ms` : '-';
+  }
+
+  function renderProviderSignals(row, compact = false) {
+    const container = document.createElement('div');
+    container.className = compact ? 'asg-candidate-signals' : 'asg-provider-signals';
+    const signals = getProviderSignalSummary(row);
+    for (const signal of signals) {
+      const item = document.createElement('span');
+      item.className = `asg-provider-signal asg-signal-${signal.tone}`;
+      item.textContent = signal.label;
+      container.appendChild(item);
+    }
+    container.title = signals.map((signal) => signal.label).join(' · ');
+    return container;
   }
 
   class Controller {
@@ -1688,7 +1889,7 @@
             ? `连续成功 ${winner.recentConsecutiveSuccessCount || 0} 点`
             : `可用率 ${formatPercent(winner.success10m)}`;
         metrics.textContent = `10m ${availabilityText} · ${winner.recentSampleCount}次探测 · 首Token ${formatLatency(winner.latency)}${this.stability.stable ? ' · 已稳定' : ` · ${this.stability.count}/${this.config.consecutiveChecks} 次`}`;
-        recommend.append(title, metrics, renderAvailabilityChart(this.monitorSeries, winner.id, winner.name));
+        recommend.append(title, metrics, renderProviderSignals(winner), renderAvailabilityChart(this.monitorSeries, winner.id, winner.name));
         if (this.config.mode === 'balance') {
           const reason = document.createElement('div');
           reason.className = 'asg-balance-reason';
@@ -1811,7 +2012,7 @@
           : this.config.availabilityMode === 'consecutive'
             ? `10m 连续成功 ${candidate.recentConsecutiveSuccessCount || 0} 点`
             : `10m 可用率 ${formatPercent(candidate.success10m)}`;
-        main.append(nameRow, detail);
+        main.append(nameRow, detail, renderProviderSignals(candidate, true));
         const metrics = document.createElement('div');
         metrics.className = 'asg-candidate-metrics';
         const price = document.createElement('span');
@@ -2307,6 +2508,14 @@
     toggleSidePanelState,
     getBalanceAmount,
     formatBalance,
+    normalizeCacheHitRate,
+    formatCacheHitRate,
+    getModelHealthInfo,
+    getModelDetectionInfo,
+    getProviderSignalSummary,
+    normalizeProviderRow,
+    normalizeProviderSummary,
+    normalizeProviderSeries,
     getExcludedGroupInfo,
     analyzeCandidates,
     rankCandidates,

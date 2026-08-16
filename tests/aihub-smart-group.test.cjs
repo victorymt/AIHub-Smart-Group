@@ -50,12 +50,22 @@ test('renders the full candidate ranking as a labeled ordered list', () => {
 
 test('finds a provider row by its complete normalized group name', () => {
   const rows = [
-    { querySelector: () => ({ textContent: 'A001-Plus' }) },
-    { querySelector: () => ({ textContent: ' A008-BugTeam ' }) },
+    {
+      querySelector(selector) {
+        assert.equal(selector, '.group-cell strong, .monitor-plan-cell');
+        return { textContent: 'A001-Plus' };
+      },
+    },
+    {
+      querySelector(selector) {
+        assert.equal(selector, '.group-cell strong, .monitor-plan-cell');
+        return { textContent: ' A008-BugTeam ' };
+      },
+    },
   ];
   const root = {
     querySelectorAll(selector) {
-      assert.equal(selector, '.monitor-api-row:not(.monitor-api-head)');
+      assert.equal(selector, '.decision-entry, .monitor-api-row:not(.monitor-api-head)');
       return rows;
     },
   };
@@ -68,18 +78,25 @@ test('finds a provider row by its complete normalized group name', () => {
 test('finds and reads the native provider refresh button state', () => {
   const idleButton = { disabled: false, textContent: '刷新' };
   const busyButton = { disabled: true, textContent: '刷新中' };
+  const newButton = { title: '刷新监测数据', textContent: '刷新' };
   const root = {
     querySelector(selector) {
       assert.equal(selector, '.monitor-refresh-button');
-      return idleButton;
+      return null;
+    },
+    querySelectorAll(selector) {
+      assert.equal(selector, 'button.monitor-icon-button');
+      return [{ title: '其他操作', textContent: '' }, newButton];
     },
   };
 
-  assert.equal(core.findProviderRefreshButton(root), idleButton);
+  assert.equal(core.findProviderRefreshButton(root), newButton);
+  assert.equal(core.findProviderRefreshButton({ querySelector: () => idleButton }), idleButton);
   assert.equal(core.findProviderRefreshButton(null), null);
   assert.equal(core.isProviderRefreshButtonBusy(idleButton), false);
   assert.equal(core.isProviderRefreshButtonBusy(busyButton), true);
   assert.equal(core.isProviderRefreshButtonBusy({ disabled: false, textContent: '检测中...' }), true);
+  assert.equal(core.isProviderRefreshButtonBusy({ disabled: false, textContent: '', querySelector: () => ({}) }), true);
 });
 
 test('runs provider refresh and recommendation detection from one panel action', () => {
@@ -89,6 +106,14 @@ test('runs provider refresh and recommendation detection from one panel action',
   assert.match(userscriptSource, /location\.pathname\.replace\(\/\\\/\+\$\/, ''\) === '\/providers'/);
   assert.match(userscriptSource, /\? '刷新并检测'/);
   assert.match(userscriptSource, /渠道检测刷新完成，正在更新推荐/);
+});
+
+test('uses the updated provider endpoints and renders the new provider signals', () => {
+  assert.match(userscriptSource, /apiRequest\('\/public\/providers'\)/);
+  assert.match(userscriptSource, /apiRequest\('\/public\/providers\/series\?range=6h'\)/);
+  assert.match(userscriptSource, /renderProviderSignals\(winner\)/);
+  assert.match(userscriptSource, /renderProviderSignals\(candidate, true\)/);
+  assert.match(userscriptSource, /\.decision-entry\.asg-provider-locate-target/);
 });
 
 test('accepts only unexpired provider location targets', () => {
@@ -179,6 +204,14 @@ test('filters and orders eligible monitor rows by recent availability then price
   const ranked = core.rankCandidates(rows, core.DEFAULT_CONFIG);
 
   assert.deepEqual(ranked.map((row) => row.planType), ['slow-cheap', 'best']);
+});
+
+test('does not recommend provider rows hidden from the hall', () => {
+  const rows = [
+    { planType: 'hidden', group_id: 1, priceMultiplier: 0.01, available: true, visibleInHall: false, successRates: { '10m': 1 }, firstTokenLatencyMs: 10, warningReasons: [] },
+    { planType: 'visible', group_id: 2, priceMultiplier: 0.02, available: true, visibleInHall: true, successRates: { '10m': 1 }, firstTokenLatencyMs: 20, warningReasons: [] },
+  ];
+  assert.deepEqual(core.rankCandidates(rows, core.DEFAULT_CONFIG).map((row) => row.planType), ['visible']);
 });
 
 test('excludes groups whose names contain configured keywords', () => {
@@ -450,10 +483,88 @@ test('marks authenticated user API requests like the AIHub client', () => {
     'X-User-UI-Request': '1',
   });
   assert.deepEqual(core.buildApiHeaders('/public/monitor/summary', ''), {});
+  assert.deepEqual(core.buildApiHeaders('/public/providers', ''), {});
   assert.deepEqual(core.buildApiHeaders('/auth/me?timezone=Asia%2FShanghai', 'token-value'), {
     Authorization: 'Bearer token-value',
     'X-User-UI-Request': '1',
   });
+});
+
+test('normalizes the updated provider hall summary fields', () => {
+  const summary = core.normalizeProviderSummary({
+    code: 0,
+    data: {
+      generated_at: '2026-08-16T02:11:42Z',
+      items: [{
+        group_id: 75,
+        code: 'A027-BugTeam',
+        rate_multiplier: 0.04,
+        available: true,
+        visible_in_hall: true,
+        probe_ttft_ms: 1688,
+        last_probed_at: '2026-08-16T02:06:20Z',
+        success_rates: { '5m': 1, '6h': 0.29, '24h': 0.7, '7d': 0.5, '30d': 0.51 },
+        cache_hit_rate: '84.38%',
+        model_health: { sol: 'healthy', terra: 'healthy', luna: 'failed' },
+        model_detection: { applicable: true, status: 'passed', confidence: 'high' },
+        response_valid: true,
+        user_avg_ttft_ms: 4033.44,
+        user_sample_count: 120,
+        user_has_data: true,
+      }],
+    },
+  });
+
+  assert.equal(summary.generatedAt, '2026-08-16T02:11:42Z');
+  assert.equal(summary.apis.length, 1);
+  assert.equal(summary.apis[0].id, '75');
+  assert.equal(summary.apis[0].planType, 'A027-BugTeam');
+  assert.equal(summary.apis[0].priceMultiplier, 0.04);
+  assert.equal(summary.apis[0].firstTokenLatencyMs, 1688);
+  assert.equal(summary.apis[0].cacheHitRate, 0.8438);
+  assert.equal(summary.apis[0].cacheHitRateText, '84.38%');
+  assert.deepEqual(summary.apis[0].modelHealth, { sol: 'healthy', terra: 'healthy', luna: 'failed' });
+  assert.equal(summary.apis[0].modelDetection.status, 'passed');
+  assert.equal(summary.apis[0].responseValid, true);
+  assert.equal(summary.apis[0].successRates['6h'], 0.29);
+  assert.equal(summary.apis[0].userAverageTTFTMs, 4033.44);
+});
+
+test('normalizes updated provider series while retaining legacy payload support', () => {
+  const series = core.normalizeProviderSeries({
+    data: {
+      generated_at: '2026-08-16T02:10:19Z',
+      range: '6h',
+      items: [{ group_id: 75, probe: [[1000, 1], [2000, 0]], user_ttft: [{ at: '2026-08-16T02:00:00Z', avg_ttft_ms: 1200 }] }],
+    },
+  });
+  assert.deepEqual(series.seriesByApiId['75'], [[1000, 1], [2000, 0]]);
+  assert.equal(series.userTTFTByApiId['75'][0].avg_ttft_ms, 1200);
+  assert.equal(series.generatedAt, '2026-08-16T02:10:19Z');
+
+  const legacy = { generatedAt: '2026-08-16T02:00:00Z', range: '6h', seriesByApiId: { 9: [[500, 1]] } };
+  assert.deepEqual(core.normalizeProviderSeries(legacy).seriesByApiId, legacy.seriesByApiId);
+});
+
+test('formats cache, model health, and model detection signals', () => {
+  assert.equal(core.normalizeCacheHitRate('84.38%'), 0.8438);
+  assert.equal(core.normalizeCacheHitRate(84.38), 0.8438);
+  assert.equal(core.normalizeCacheHitRate('样本不足'), null);
+  assert.equal(core.formatCacheHitRate('84.38%'), '缓存 84.4%');
+  assert.deepEqual(core.getModelHealthInfo({ sol: 'healthy', terra: 'healthy', luna: 'failed' }), {
+    label: 'Sol/Terra 健康 · Luna 异常',
+    tone: 'warning',
+  });
+  assert.deepEqual(core.getModelDetectionInfo({ applicable: true, status: 'insufficient_evidence' }), {
+    status: 'insufficient_evidence',
+    label: '检测证据不足',
+    tone: 'warning',
+  });
+  assert.deepEqual(core.getProviderSignalSummary({
+    cacheHitRate: 0.5,
+    modelHealth: { sol: 'healthy', terra: 'healthy', luna: 'healthy' },
+    modelDetection: { status: 'passed' },
+  }).map((signal) => signal.label), ['缓存 50.0%', 'Sol/Terra/Luna 健康', '检测通过']);
 });
 
 test('filters by successful monitor points or trailing consecutive points', () => {
