@@ -2,7 +2,7 @@
 // @name         AIHub Smart Group
 // @name:zh-CN   AIHub 智能分组
 // @namespace    local.aihub.smart-group
-// @version      0.6.0
+// @version      0.7.0
 // @description  Recommend reliable low-cost groups on AIHub.
 // @description:zh-CN 按价格、速度和可用性推荐 AIHub 分组
 // @license      MIT
@@ -28,7 +28,7 @@
 
   const ROOT_ID = 'aihub-smart-group-panel';
   const TOGGLE_ID = 'aihub-smart-group-toggle';
-  const SCRIPT_VERSION = '0.6.0';
+  const SCRIPT_VERSION = '0.7.0';
   const STORAGE_PREFIX = 'aihub-smart-group:';
   const PENDING_PROVIDER_GROUP_KEY = `${STORAGE_PREFIX}pending-provider-group`;
   const AVAILABILITY_CHART_RANGE_MS = 6 * 60 * 60 * 1000;
@@ -37,6 +37,7 @@
     price: '价格',
     balance: '平衡',
     speed: '速度',
+    smart: '智能',
   });
   const DEFAULT_CONFIG = Object.freeze({
     minSuccess10m: 0.10,
@@ -52,6 +53,9 @@
     availabilityMode: 'percent',
     minSuccessPoints10m: 1,
     minConsecutiveSuccesses10m: 2,
+    targetModel: 'any',
+    modelDetectionPolicy: 'observe',
+    minCacheHitRate: 0,
   });
 
   function numberOr(value, fallback) {
@@ -92,11 +96,22 @@
       availabilityMode: normalizeAvailabilityMode(source.availabilityMode),
       minSuccessPoints10m: Math.round(clamp(numberOr(source.minSuccessPoints10m, DEFAULT_CONFIG.minSuccessPoints10m), 1, 60)),
       minConsecutiveSuccesses10m: Math.round(clamp(numberOr(source.minConsecutiveSuccesses10m, DEFAULT_CONFIG.minConsecutiveSuccesses10m), 1, 60)),
+      targetModel: normalizeTargetModel(source.targetModel),
+      modelDetectionPolicy: normalizeModelDetectionPolicy(source.modelDetectionPolicy),
+      minCacheHitRate: clamp(numberOr(source.minCacheHitRate, DEFAULT_CONFIG.minCacheHitRate), 0, 1),
     };
   }
 
   function normalizeGroupMode(value) {
     return Object.prototype.hasOwnProperty.call(GROUP_MODE_LABELS, value) ? value : 'price';
+  }
+
+  function normalizeTargetModel(value) {
+    return value === 'sol' || value === 'terra' || value === 'luna' ? value : 'any';
+  }
+
+  function normalizeModelDetectionPolicy(value) {
+    return value === 'standard' || value === 'strict' ? value : 'observe';
   }
 
   function normalizePanelTab(value) {
@@ -193,6 +208,73 @@
     ];
   }
 
+  function modelHealthPassesTarget(modelHealth, targetModel = 'any') {
+    const target = normalizeTargetModel(targetModel);
+    return target === 'any' || String(modelHealth?.[target] || '').toLocaleLowerCase() === 'healthy';
+  }
+
+  function isModelDetectionExpired(modelDetection, now = Date.now()) {
+    const expiresAt = modelDetection?.expires_at ?? modelDetection?.expiresAt;
+    if (expiresAt == null || expiresAt === '') return false;
+    const timestamp = typeof expiresAt === 'number' ? expiresAt : Date.parse(String(expiresAt));
+    if (!Number.isFinite(timestamp)) return false;
+    return timestamp <= Number(now);
+  }
+
+  function modelDetectionPassesPolicy(modelDetection, policy = 'observe', now = Date.now()) {
+    const normalizedPolicy = normalizeModelDetectionPolicy(policy);
+    if (normalizedPolicy === 'observe') return true;
+    if (modelDetection?.applicable === false) return normalizedPolicy !== 'strict';
+    const status = String(modelDetection?.status || 'not_tested').toLocaleLowerCase();
+    if (normalizedPolicy === 'standard') return status !== 'suspected' && status !== 'detection_failed';
+    return (status === 'passed' || status === 'juice_passed') && !isModelDetectionExpired(modelDetection, now);
+  }
+
+  function getModelHealthScore(modelHealth) {
+    const source = modelHealth && typeof modelHealth === 'object' ? modelHealth : null;
+    if (!source) return 0.4;
+    const statuses = ['sol', 'terra', 'luna'].map((key) => String(source[key] || 'insufficient').toLocaleLowerCase());
+    return statuses.reduce((total, status) => total + (status === 'healthy' ? 1 : status === 'failed' ? 0 : 0.5), 0) / 3;
+  }
+
+  function getModelDetectionScore(modelDetection, now = Date.now()) {
+    if (!modelDetection || modelDetection.applicable === false) return 0.4;
+    const status = String(modelDetection.status || 'not_tested').toLocaleLowerCase();
+    if (isModelDetectionExpired(modelDetection, now)) return 0.3;
+    if (status === 'passed' || status === 'juice_passed') return 1;
+    if (status === 'insufficient_evidence') return 0.6;
+    if (status === 'suspected') return 0.2;
+    if (status === 'detection_failed') return 0;
+    return 0.4;
+  }
+
+  function getSmartTTFTScore(candidate) {
+    const ttft = nonNegativeNumberOrNull(candidate?.userAverageTTFTMs ?? candidate?.user_avg_ttft_ms ?? candidate?.probeTTFTMs ?? candidate?.probe_ttft_ms ?? candidate?.latency);
+    return ttft === null ? 0 : 1 / (1 + (ttft / 1000));
+  }
+
+  function getSmartOutputScore(candidate) {
+    const outputTokensPerSecond = nonNegativeNumberOrNull(candidate?.outputTokensPerSecond ?? candidate?.output_tps);
+    return outputTokensPerSecond === null ? 0 : outputTokensPerSecond / (outputTokensPerSecond + 100);
+  }
+
+  function getSmartCandidateScore(candidate, now = Date.now()) {
+    const availability = Number.isFinite(Number(candidate?.success10m)) ? clamp(Number(candidate.success10m), 0, 1) : 0;
+    const cache = normalizeCacheHitRate(candidate?.cacheHitRate ?? candidate?.cache_hit_rate);
+    const confidence = candidate?.userHasData || candidate?.user_has_data
+      ? clamp((Number(candidate.userSampleCount ?? candidate.user_sample_count) || 0) / 100, 0, 1)
+      : 0;
+    return (
+      availability * 0.30
+      + getSmartTTFTScore(candidate) * 0.20
+      + (cache === null ? 0 : cache) * 0.15
+      + getSmartOutputScore(candidate) * 0.10
+      + getModelHealthScore(candidate?.modelHealth ?? candidate?.model_health) * 0.10
+      + getModelDetectionScore(candidate?.modelDetection ?? candidate?.model_detection, now) * 0.10
+      + confidence * 0.05
+    );
+  }
+
   function getExcludedGroupInfo(rows, keywordInput) {
     const keywords = normalizeExcludedGroupKeywords(keywordInput).split('|').filter(Boolean);
     const matches = [];
@@ -213,7 +295,7 @@
     const normalizedConfig = normalizeConfig(config);
     const excludedKeywords = normalizedConfig.excludedGroupKeywords.split('|').filter(Boolean);
     const sourceRows = Array.isArray(rows) ? rows : [];
-    const counts = { total: sourceRows.length, invalid: 0, unavailable: 0, lowSuccess: 0, warnings: 0, keywords: 0, eligible: 0 };
+    const counts = { total: sourceRows.length, invalid: 0, unavailable: 0, lowSuccess: 0, warnings: 0, keywords: 0, modelHealth: 0, modelDetection: 0, cache: 0, eligible: 0 };
     const candidates = [];
     for (const row of sourceRows) {
       const groupId = Number(row?.group_id);
@@ -247,6 +329,21 @@
         counts.keywords += 1;
         continue;
       }
+      const modelHealth = row.modelHealth ?? row.model_health ?? null;
+      const modelDetection = row.modelDetection ?? row.model_detection ?? null;
+      const cacheHitRate = normalizeCacheHitRate(row.cacheHitRate ?? row.cache_hit_rate);
+      if (!modelHealthPassesTarget(modelHealth, normalizedConfig.targetModel)) {
+        counts.modelHealth += 1;
+        continue;
+      }
+      if (!modelDetectionPassesPolicy(modelDetection, normalizedConfig.modelDetectionPolicy)) {
+        counts.modelDetection += 1;
+        continue;
+      }
+      if (normalizedConfig.minCacheHitRate > 0 && (cacheHitRate === null || cacheHitRate < normalizedConfig.minCacheHitRate)) {
+        counts.cache += 1;
+        continue;
+      }
       candidates.push({
         ...row,
         groupId,
@@ -254,6 +351,9 @@
         success10m,
         latency: Number.isFinite(Number(row.firstTokenLatencyMs)) ? Number(row.firstTokenLatencyMs) : Number.POSITIVE_INFINITY,
         name,
+        cacheHitRate,
+        modelHealth,
+        modelDetection,
       });
       counts.eligible += 1;
     }
@@ -283,6 +383,13 @@
     const candidates = getEligibleCandidates(rows, normalizedConfig);
     if (normalizedConfig.mode === 'speed') return candidates.sort(compareSpeed);
     if (normalizedConfig.mode === 'balance') return candidates.filter((candidate) => candidate.price <= normalizedConfig.balanceMaxPrice).sort(compareSpeed);
+    if (normalizedConfig.mode === 'smart') {
+      const scoreAt = Date.now();
+      return candidates
+        .filter((candidate) => candidate.price <= normalizedConfig.balanceMaxPrice)
+        .map((candidate) => ({ ...candidate, smartScore: getSmartCandidateScore(candidate, scoreAt) }))
+        .sort((left, right) => right.smartScore - left.smartScore || left.price - right.price || left.latency - right.latency || left.name.localeCompare(right.name));
+    }
     return candidates.sort(comparePrice);
   }
 
@@ -290,6 +397,7 @@
     const normalizedConfig = normalizeConfig(config);
     if (normalizedConfig.mode === 'speed') return '首 Token 从快到慢';
     if (normalizedConfig.mode === 'balance') return `倍率 ≤ ${formatMultiplier(normalizedConfig.balanceMaxPrice)} · 首 Token 从快到慢`;
+    if (normalizedConfig.mode === 'smart') return `倍率 ≤ ${formatMultiplier(normalizedConfig.balanceMaxPrice)} · 综合评分从高到低`;
     return '倍率从低到高';
   }
 
@@ -871,7 +979,7 @@
       enabled: source.enabled !== false,
       available: source.available === true,
       visibleInHall: source.visibleInHall ?? source.visible_in_hall ?? source.available === true,
-      firstTokenLatencyMs: nonNegativeNumberOrNull(source.firstTokenLatencyMs ?? source.probe_ttft_ms ?? source.avg_ttft_ms),
+      firstTokenLatencyMs: nonNegativeNumberOrNull(source.firstTokenLatencyMs ?? source.probe_ttft_ms ?? source.probeTTFTMs ?? source.avg_ttft_ms),
       successRates,
       checkedAt: source.checkedAt ?? source.last_probed_at ?? null,
       warningReasons: Array.isArray(source.warningReasons) ? source.warningReasons : [],
@@ -880,10 +988,11 @@
       modelHealth: source.modelHealth ?? source.model_health ?? null,
       modelDetection: source.modelDetection ?? source.model_detection ?? null,
       responseValid: source.responseValid ?? source.response_valid ?? null,
-      probeTTFTMs: nonNegativeNumberOrNull(source.probe_ttft_ms ?? source.firstTokenLatencyMs),
-      userAverageTTFTMs: nonNegativeNumberOrNull(source.user_avg_ttft_ms),
-      userSampleCount: nonNegativeNumberOrNull(source.user_sample_count),
-      userHasData: source.user_has_data === true,
+      probeTTFTMs: nonNegativeNumberOrNull(source.probe_ttft_ms ?? source.probeTTFTMs ?? source.firstTokenLatencyMs),
+      userAverageTTFTMs: nonNegativeNumberOrNull(source.user_avg_ttft_ms ?? source.userAverageTTFTMs),
+      userSampleCount: nonNegativeNumberOrNull(source.user_sample_count ?? source.userSampleCount),
+      userHasData: source.user_has_data === true || source.userHasData === true,
+      outputTokensPerSecond: nonNegativeNumberOrNull(source.outputTokensPerSecond ?? source.output_tps),
     };
   }
 
@@ -1102,6 +1211,7 @@
     #${ROOT_ID} .asg-candidate-metrics{text-align:right;white-space:nowrap}
     #${ROOT_ID} .asg-candidate-price{display:block;color:#15803d;font-size:12px;font-weight:700}
     #${ROOT_ID} .asg-candidate-latency{display:block;margin-top:1px;color:#475467;font-size:10px}
+    #${ROOT_ID} .asg-candidate-score{display:block;margin-top:1px;color:#1456d9;font-size:10px;font-weight:600}
     #${ROOT_ID} .asg-candidate-empty{padding:7px 3px;color:#667085;text-align:center}
     #${ROOT_ID} .asg-error{color:#b42318;background:#fff4f2;border-color:#fecdca}
     .dark #${ROOT_ID}{color:#f2f4f7;background:#101828;border-color:#344054;box-shadow:0 18px 48px rgba(0,0,0,.48)}
@@ -1121,6 +1231,7 @@
     .dark #${ROOT_ID} .asg-candidate-locate:hover,.dark #${ROOT_ID} .asg-candidate-best .asg-candidate-locate:hover{background:#1d2939!important}
     .dark #${ROOT_ID} .asg-muted,.dark #${ROOT_ID} .asg-status,.dark #${ROOT_ID} .asg-availability-summary,.dark #${ROOT_ID} .asg-availability-axis,.dark #${ROOT_ID} .asg-recommend-meta,.dark #${ROOT_ID} .asg-key-detail span,.dark #${ROOT_ID} .asg-ranking-rule,.dark #${ROOT_ID} .asg-candidate-rank,.dark #${ROOT_ID} .asg-candidate-detail,.dark #${ROOT_ID} .asg-candidate-empty{color:#98a2b3}
     .dark #${ROOT_ID} label,.dark #${ROOT_ID} summary,.dark #${ROOT_ID} .asg-auto,.dark #${ROOT_ID} .asg-settings-inline-label,.dark #${ROOT_ID} .asg-metrics,.dark #${ROOT_ID} .asg-candidate-latency{color:#d0d5dd}
+    .dark #${ROOT_ID} .asg-candidate-score{color:#84adff}
     .dark #${ROOT_ID} .asg-side-head strong,.dark #${ROOT_ID} .asg-settings-title,.dark #${ROOT_ID} .asg-ranking-title,.dark #${ROOT_ID} .asg-candidate-name,.dark #${ROOT_ID} .asg-availability-title{color:#e4e7ec}
     .dark #${ROOT_ID} .asg-balance,.dark #${ROOT_ID} .asg-key-metric,.dark #${ROOT_ID} .asg-candidate-price,.dark #${ROOT_ID} .asg-monitor-age,.dark #${ROOT_ID} .asg-balance-preview,.dark #${ROOT_ID} .asg-balance-reason,.dark #${ROOT_ID} .asg-setting-preview{color:#6ce9a6}
     .dark #${ROOT_ID} .asg-save{color:#fff;background:#1456d9;border-color:#1456d9}
@@ -1225,6 +1336,10 @@
 
   function formatLatency(value) {
     return Number.isFinite(value) ? `${Math.round(value)} ms` : '-';
+  }
+
+  function formatSmartScore(value) {
+    return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(1)} 分` : '-';
   }
 
   function renderProviderSignals(row, compact = false) {
@@ -1335,7 +1450,7 @@
           <div class="asg-main-column">
             <div class="asg-status-row"><div class="asg-status" data-field="status">准备检测</div><div class="asg-balance" data-field="balance">余额读取中...</div></div>
             <label for="asg-mode-select">模式</label>
-            <select id="asg-mode-select" data-field="mode"><option value="price">价格（最低价格）</option><option value="balance">平衡（倍率上限内首 Token 最快）</option><option value="speed">速度（最快首字）</option></select>
+            <select id="asg-mode-select" data-field="mode"><option value="price">价格（最低价格）</option><option value="balance">平衡（倍率上限内首 Token 最快）</option><option value="speed">速度（最快首字）</option><option value="smart">智能（倍率上限内综合评分）</option></select>
             <div class="asg-recommend" data-field="recommend"><div class="asg-muted">正在读取监控数据...</div></div>
             <label for="asg-key-select">目标密钥</label>
             <select id="asg-key-select" data-field="key"></select>
@@ -1347,7 +1462,7 @@
             </div>
             <div class="asg-actions"><button data-action="refresh">检测</button><button data-action="switch" disabled>切换到推荐分组</button></div>
             <label class="asg-auto"><input type="checkbox" data-field="auto"> 自动切换（默认关闭）</label>
-            <details class="asg-guide"><summary>快速开始</summary><ol><li>选择价格、平衡或速度模式。</li><li>选择目标密钥并点击“检测”。</li><li>确认推荐分组后点击切换；自动切换可在设置中开启。</li></ol></details>
+            <details class="asg-guide"><summary>快速开始</summary><ol><li>选择价格、平衡、速度或智能模式。</li><li>选择目标密钥并点击“检测”。</li><li>确认推荐分组后点击切换；自动切换可在设置中开启。</li></ol></details>
             <section class="asg-ranking" aria-labelledby="asg-ranking-title"><div class="asg-ranking-head"><span class="asg-ranking-title" id="asg-ranking-title">推荐排序</span><span class="asg-ranking-rule" data-field="ranking-rule"></span></div><ol class="asg-list" data-field="list"></ol></section>
           </div>
           <aside class="asg-side-column" id="asg-side-column" aria-label="设置与日志" hidden>
@@ -1367,6 +1482,14 @@
                 </div>
               </section>
               <section class="asg-settings-section">
+                <div class="asg-settings-title">模型与缓存</div>
+                <div class="asg-settings-grid">
+                  <label>目标模型<select data-setting="targetModel"><option value="any">全部模型</option><option value="sol">Sol</option><option value="terra">Terra</option><option value="luna">Luna</option></select></label>
+                  <label>模型检测策略<select data-setting="modelDetectionPolicy"><option value="observe">观察（不筛选）</option><option value="standard">标准（排除存疑/失败）</option><option value="strict">严格（只要通过且未过期）</option></select></label>
+                  <label class="asg-setting-wide" title="0 表示不按缓存命中率筛选">最低缓存命中率（0–1）<input type="number" min="0" max="1" step="0.01" data-setting="minCacheHitRate"></label>
+                </div>
+              </section>
+              <section class="asg-settings-section">
                 <div class="asg-settings-title">检测与切换</div>
                 <div class="asg-settings-grid">
                   <label>连续通过次数<input type="number" min="1" max="5" step="1" data-setting="consecutiveChecks"></label>
@@ -1375,7 +1498,7 @@
                 </div>
               </section>
               <section class="asg-settings-section">
-                <div class="asg-settings-head"><div class="asg-settings-title">平衡策略</div><label class="asg-settings-inline-label" for="asg-balance-max-setting">允许切换的最高倍率</label></div>
+                <div class="asg-settings-head"><div class="asg-settings-title">倍率上限策略</div><label class="asg-settings-inline-label" for="asg-balance-max-setting">允许切换的最高倍率</label></div>
                 <div class="asg-settings-grid">
                   <label class="asg-balance-setting"><input id="asg-balance-max-setting" type="number" min="0" max="1000" step="0.001" data-setting="balanceMaxPrice" aria-label="允许切换的最高倍率"><span class="asg-balance-preview" data-field="balance-preview" aria-live="polite"></span></label>
                 </div>
@@ -1567,7 +1690,10 @@
         || normalizedDraft.minSuccessPoints10m !== this.config.minSuccessPoints10m
         || normalizedDraft.minConsecutiveSuccesses10m !== this.config.minConsecutiveSuccesses10m
         || normalizedDraft.requireNoWarnings !== this.config.requireNoWarnings
-        || normalizedDraft.excludedGroupKeywords !== this.config.excludedGroupKeywords;
+        || normalizedDraft.excludedGroupKeywords !== this.config.excludedGroupKeywords
+        || normalizedDraft.targetModel !== this.config.targetModel
+        || normalizedDraft.modelDetectionPolicy !== this.config.modelDetectionPolicy
+        || normalizedDraft.minCacheHitRate !== this.config.minCacheHitRate;
       const suffix = hasUnsavedFilter ? ' · 未保存' : '';
       const limit = formatMultiplier(normalizedDraft.balanceMaxPrice);
       if (!this.lastUpdated) {
@@ -1575,7 +1701,8 @@
       } else if (candidateCount === 0) {
         preview.textContent = `最高倍率 ${limit} · 当前没有符合条件的分组${suffix}`;
       } else {
-        preview.textContent = `只考虑倍率 ≤ ${limit} · ${candidateCount} 个分组可选 · 将选首 Token 最快${suffix}`;
+        const rankingText = normalizedDraft.mode === 'smart' ? '将按综合评分排序' : '将选首 Token 最快';
+        preview.textContent = `只考虑倍率 ≤ ${limit} · ${candidateCount} 个分组可选 · ${rankingText}${suffix}`;
       }
       preview.classList.toggle('asg-preview-pending', hasUnsavedFilter);
     }
@@ -1874,7 +2001,7 @@
       if (!winner) {
         const empty = document.createElement('div');
         empty.className = 'asg-muted';
-        empty.textContent = this.config.mode === 'balance'
+        empty.textContent = this.config.mode === 'balance' || this.config.mode === 'smart'
           ? '没有符合当前可靠性和倍率上限的分组'
           : '没有符合当前可靠性条件的分组';
         recommend.appendChild(empty);
@@ -1888,20 +2015,22 @@
           : this.config.availabilityMode === 'consecutive'
             ? `连续成功 ${winner.recentConsecutiveSuccessCount || 0} 点`
             : `可用率 ${formatPercent(winner.success10m)}`;
-        metrics.textContent = `10m ${availabilityText} · ${winner.recentSampleCount}次探测 · 首Token ${formatLatency(winner.latency)}${this.stability.stable ? ' · 已稳定' : ` · ${this.stability.count}/${this.config.consecutiveChecks} 次`}`;
+        metrics.textContent = `10m ${availabilityText} · ${winner.recentSampleCount}次探测 · 首Token ${formatLatency(winner.latency)}${this.config.mode === 'smart' ? ` · 综合评分 ${formatSmartScore(winner.smartScore)}` : ''}${this.stability.stable ? ' · 已稳定' : ` · ${this.stability.count}/${this.config.consecutiveChecks} 次`}`;
         recommend.append(title, metrics, renderProviderSignals(winner), renderAvailabilityChart(this.monitorSeries, winner.id, winner.name));
-        if (this.config.mode === 'balance') {
+        if (this.config.mode === 'balance' || this.config.mode === 'smart') {
           const reason = document.createElement('div');
           reason.className = 'asg-balance-reason';
-          reason.textContent = `倍率上限 ${formatMultiplier(this.config.balanceMaxPrice)} · 范围内首 Token 最快`;
+          reason.textContent = this.config.mode === 'smart'
+            ? `倍率上限 ${formatMultiplier(this.config.balanceMaxPrice)} · 范围内综合评分最高`
+            : `倍率上限 ${formatMultiplier(this.config.balanceMaxPrice)} · 范围内首 Token 最快`;
           recommend.appendChild(reason);
         }
       }
       const diagnostics = this.candidateDiagnostics?.counts || {};
       const diagnostic = document.createElement('div');
       diagnostic.className = 'asg-recommend-meta';
-      const overLimit = this.config.mode === 'balance' ? Math.max(0, Number(diagnostics.eligible || 0) - this.ranked.length) : 0;
-      diagnostic.textContent = `参与比较 ${this.ranked.length} · 排除关键词 ${diagnostics.keywords || 0} · 不可用 ${diagnostics.unavailable || 0} · 可用率不足 ${diagnostics.lowSuccess || 0} · 监控警告 ${diagnostics.warnings || 0}${overLimit ? ` · 超过倍率上限 ${overLimit}` : ''}`;
+      const overLimit = this.config.mode === 'balance' || this.config.mode === 'smart' ? Math.max(0, Number(diagnostics.eligible || 0) - this.ranked.length) : 0;
+      diagnostic.textContent = `参与比较 ${this.ranked.length} · 排除关键词 ${diagnostics.keywords || 0} · 不可用 ${diagnostics.unavailable || 0} · 可用率不足 ${diagnostics.lowSuccess || 0} · 监控警告 ${diagnostics.warnings || 0} · 模型健康 ${diagnostics.modelHealth || 0} · 模型检测 ${diagnostics.modelDetection || 0} · 缓存不足 ${diagnostics.cache || 0}${overLimit ? ` · 超过倍率上限 ${overLimit}` : ''}`;
       recommend.appendChild(diagnostic);
       const freshness = document.createElement('div');
       freshness.className = `asg-monitor-age${this.monitorFreshness.stale ? ' asg-stale' : ''}`;
@@ -2022,6 +2151,12 @@
         latency.className = 'asg-candidate-latency';
         latency.textContent = `首 Token ${formatLatency(candidate.latency)}`;
         metrics.append(price, latency);
+        if (this.config.mode === 'smart') {
+          const score = document.createElement('span');
+          score.className = 'asg-candidate-score';
+          score.textContent = `评分 ${formatSmartScore(candidate.smartScore)}`;
+          metrics.appendChild(score);
+        }
         locate.append(rank, main, metrics);
         item.appendChild(locate);
         list.appendChild(item);
@@ -2503,6 +2638,8 @@
     GROUP_MODE_LABELS,
     normalizeConfig,
     normalizeGroupMode,
+    normalizeTargetModel,
+    normalizeModelDetectionPolicy,
     normalizeAvailabilityMode,
     normalizePanelTab,
     toggleSidePanelState,
@@ -2513,6 +2650,12 @@
     getModelHealthInfo,
     getModelDetectionInfo,
     getProviderSignalSummary,
+    modelHealthPassesTarget,
+    isModelDetectionExpired,
+    modelDetectionPassesPolicy,
+    getModelHealthScore,
+    getModelDetectionScore,
+    getSmartCandidateScore,
     normalizeProviderRow,
     normalizeProviderSummary,
     normalizeProviderSeries,
@@ -2539,6 +2682,7 @@
     getGroupDropdownToneClass,
     formatKeyOptionLabel,
     formatMultiplier,
+    formatSmartScore,
     getPageFeatures,
     createStabilityState,
     advanceStability,

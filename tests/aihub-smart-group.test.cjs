@@ -116,6 +116,15 @@ test('uses the updated provider endpoints and renders the new provider signals',
   assert.match(userscriptSource, /\.decision-entry\.asg-provider-locate-target/);
 });
 
+test('renders smart mode and model-aware filter settings', () => {
+  assert.match(userscriptSource, /<option value="smart">智能（倍率上限内综合评分）<\/option>/);
+  assert.match(userscriptSource, /data-setting="targetModel"/);
+  assert.match(userscriptSource, /data-setting="modelDetectionPolicy"/);
+  assert.match(userscriptSource, /data-setting="minCacheHitRate"/);
+  assert.match(userscriptSource, /综合评分 \$\{formatSmartScore\(winner\.smartScore\)\}/);
+  assert.match(userscriptSource, /评分 \$\{formatSmartScore\(candidate\.smartScore\)\}/);
+});
+
 test('accepts only unexpired provider location targets', () => {
   const valid = JSON.stringify({ name: 'A008-BugTeam', expiresAt: 31_000 });
   assert.deepEqual(core.parsePendingProviderLocation(valid, 1_000), { name: 'A008-BugTeam', expiresAt: 31_000 });
@@ -157,6 +166,26 @@ test('normalizes thresholds and safety settings', () => {
   assert.equal(config.availabilityMode, 'percent');
   assert.equal(config.minSuccessPoints10m, 1);
   assert.equal(config.minConsecutiveSuccesses10m, 2);
+  assert.equal(config.targetModel, 'any');
+  assert.equal(config.modelDetectionPolicy, 'observe');
+  assert.equal(config.minCacheHitRate, 0);
+});
+
+test('normalizes model, detection, cache, and smart settings', () => {
+  const config = core.normalizeConfig({
+    mode: 'smart',
+    targetModel: 'terra',
+    modelDetectionPolicy: 'strict',
+    minCacheHitRate: '0.75',
+  });
+
+  assert.equal(config.mode, 'smart');
+  assert.equal(config.targetModel, 'terra');
+  assert.equal(config.modelDetectionPolicy, 'strict');
+  assert.equal(config.minCacheHitRate, 0.75);
+  assert.equal(core.normalizeConfig({ targetModel: 'unknown' }).targetModel, 'any');
+  assert.equal(core.normalizeConfig({ modelDetectionPolicy: 'unknown' }).modelDetectionPolicy, 'observe');
+  assert.equal(core.normalizeConfig({ minCacheHitRate: 2 }).minCacheHitRate, 1);
 });
 
 test('normalizes selectable availability criteria', () => {
@@ -248,8 +277,72 @@ test('reports mutually exclusive candidate diagnostics', () => {
     { planType: 'eligible', group_id: 6, priceMultiplier: 0.02, available: true, successRates: { '10m': 1 }, warningReasons: [] },
   ];
   const result = core.analyzeCandidates(rows, { ...core.DEFAULT_CONFIG, excludedGroupKeywords: 'free' });
-  assert.deepEqual(result.counts, { total: 7, invalid: 1, unavailable: 2, lowSuccess: 1, warnings: 1, keywords: 1, eligible: 1 });
+  assert.deepEqual(result.counts, { total: 7, invalid: 1, unavailable: 2, lowSuccess: 1, warnings: 1, keywords: 1, modelHealth: 0, modelDetection: 0, cache: 0, eligible: 1 });
   assert.deepEqual(result.candidates.map((row) => row.name), ['eligible']);
+});
+
+test('applies model health, detection, and cache diagnostics exclusively', () => {
+  const base = { priceMultiplier: 0.05, available: true, successRates: { '10m': 1 }, warningReasons: [] };
+  const rows = [
+    { ...base, planType: 'health', group_id: 1, modelHealth: { sol: 'failed' }, modelDetection: { status: 'suspected' }, cacheHitRate: 0.1 },
+    { ...base, planType: 'detection', group_id: 2, modelHealth: { sol: 'healthy' }, modelDetection: { status: 'suspected' }, cacheHitRate: 0.1 },
+    { ...base, planType: 'cache', group_id: 3, modelHealth: { sol: 'healthy' }, modelDetection: { status: 'passed' }, cacheHitRate: null },
+    { ...base, planType: 'eligible', group_id: 4, modelHealth: { sol: 'healthy' }, modelDetection: { status: 'passed' }, cacheHitRate: 0.5 },
+  ];
+  const result = core.analyzeCandidates(rows, {
+    ...core.DEFAULT_CONFIG,
+    targetModel: 'sol',
+    modelDetectionPolicy: 'standard',
+    minCacheHitRate: 0.5,
+  });
+
+  assert.equal(result.counts.modelHealth, 1);
+  assert.equal(result.counts.modelDetection, 1);
+  assert.equal(result.counts.cache, 1);
+  assert.equal(result.counts.eligible, 1);
+  assert.equal(Object.values(result.counts).slice(1).reduce((total, value) => total + value, 0), rows.length);
+  assert.deepEqual(result.candidates.map((row) => row.name), ['eligible']);
+});
+
+test('filters concrete target models by healthy status', () => {
+  const base = { priceMultiplier: 0.05, available: true, successRates: { '10m': 1 }, warningReasons: [] };
+  const rows = [
+    { ...base, planType: 'healthy-sol', group_id: 1, modelHealth: { sol: 'healthy' } },
+    { ...base, planType: 'failed-sol', group_id: 2, modelHealth: { sol: 'failed' } },
+    { ...base, planType: 'missing-health', group_id: 3 },
+  ];
+
+  assert.deepEqual(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, targetModel: 'sol' }).map((row) => row.name), ['healthy-sol']);
+  assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, targetModel: 'any' }).length, 3);
+  assert.equal(core.modelHealthPassesTarget({ terra: 'healthy' }, 'terra'), true);
+  assert.equal(core.modelHealthPassesTarget({}, 'terra'), false);
+});
+
+test('enforces standard and strict model detection policies including expiry', () => {
+  const now = Date.parse('2026-08-16T08:00:00Z');
+  const valid = { status: 'passed', expires_at: '2026-08-16T09:00:00Z' };
+  const expired = { status: 'passed', expires_at: '2026-08-16T07:00:00Z' };
+
+  assert.equal(core.modelDetectionPassesPolicy({ status: 'suspected' }, 'standard', now), false);
+  assert.equal(core.modelDetectionPassesPolicy({ status: 'detection_failed' }, 'standard', now), false);
+  assert.equal(core.modelDetectionPassesPolicy({ status: 'insufficient_evidence' }, 'standard', now), true);
+  assert.equal(core.modelDetectionPassesPolicy(null, 'standard', now), true);
+  assert.equal(core.modelDetectionPassesPolicy(valid, 'strict', now), true);
+  assert.equal(core.modelDetectionPassesPolicy(expired, 'strict', now), false);
+  assert.equal(core.isModelDetectionExpired(expired, now), true);
+  assert.equal(core.modelDetectionPassesPolicy({ status: 'suspected' }, 'observe', now), true);
+});
+
+test('requires cache data only when a positive threshold is configured', () => {
+  const base = { priceMultiplier: 0.05, available: true, successRates: { '10m': 1 }, warningReasons: [] };
+  const rows = [
+    { ...base, planType: 'high', group_id: 1, cacheHitRate: 0.8 },
+    { ...base, planType: 'low', group_id: 2, cache_hit_rate: '40%' },
+    { ...base, planType: 'missing', group_id: 3 },
+  ];
+
+  assert.deepEqual(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, minCacheHitRate: 0.5 }).map((row) => row.name), ['high']);
+  assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, minCacheHitRate: 0 }).length, 3);
 });
 
 test('formats monitor freshness and treats invalid timestamps as stale', () => {
@@ -349,6 +442,79 @@ test('selects AIHub candidates for price, balance, and speed modes', () => {
   assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, mode: 'price' })[0].planType, 'cheap');
   assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, mode: 'balance', balanceMaxPrice: 0.05 })[0].planType, 'balanced');
   assert.equal(core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, mode: 'speed' })[0].planType, 'fast');
+});
+
+test('computes the documented smart score deterministically', () => {
+  const score = core.getSmartCandidateScore({
+    success10m: 1,
+    userAverageTTFTMs: 1000,
+    probeTTFTMs: 10,
+    cacheHitRate: 0.8,
+    outputTokensPerSecond: 100,
+    modelHealth: { sol: 'healthy', terra: 'healthy', luna: 'healthy' },
+    modelDetection: { status: 'passed', expires_at: '2099-01-01T00:00:00Z' },
+    userHasData: true,
+    userSampleCount: 100,
+  }, Date.parse('2026-08-16T08:00:00Z'));
+
+  assert.ok(Math.abs(score - 0.82) < 1e-12);
+  assert.equal(core.formatSmartScore(score), '82.0 分');
+  assert.equal(core.getModelHealthScore({ sol: 'healthy', terra: 'healthy', luna: 'healthy' }), 1);
+  assert.ok(Math.abs(core.getModelHealthScore({ sol: 'healthy' }) - (2 / 3)) < 1e-12);
+  assert.equal(core.getModelDetectionScore({ status: 'suspected' }), 0.2);
+});
+
+test('ranks smart candidates by score within the hard multiplier cap', () => {
+  const base = {
+    available: true,
+    successRates: { '10m': 1 },
+    firstTokenLatencyMs: 1000,
+    warningReasons: [],
+  };
+  const rows = [
+    {
+      ...base,
+      planType: 'cheap-poor',
+      group_id: 1,
+      priceMultiplier: 0.04,
+      userAverageTTFTMs: 5000,
+      cacheHitRate: 0,
+      outputTokensPerSecond: 0,
+      modelHealth: { sol: 'failed', terra: 'failed', luna: 'failed' },
+      modelDetection: { status: 'detection_failed' },
+    },
+    {
+      ...base,
+      planType: 'quality',
+      group_id: 2,
+      priceMultiplier: 0.08,
+      userAverageTTFTMs: 100,
+      cacheHitRate: 1,
+      outputTokensPerSecond: 200,
+      modelHealth: { sol: 'healthy', terra: 'healthy', luna: 'healthy' },
+      modelDetection: { status: 'passed', expires_at: '2099-01-01T00:00:00Z' },
+      userHasData: true,
+      userSampleCount: 100,
+    },
+    {
+      ...base,
+      planType: 'too-expensive',
+      group_id: 3,
+      priceMultiplier: 0.11,
+      userAverageTTFTMs: 1,
+      cacheHitRate: 1,
+      outputTokensPerSecond: 1000,
+      modelHealth: { sol: 'healthy', terra: 'healthy', luna: 'healthy' },
+      modelDetection: { status: 'passed', expires_at: '2099-01-01T00:00:00Z' },
+      userHasData: true,
+      userSampleCount: 100,
+    },
+  ];
+
+  const ranked = core.rankCandidates(rows, { ...core.DEFAULT_CONFIG, mode: 'smart', balanceMaxPrice: 0.1 });
+  assert.deepEqual(ranked.map((row) => row.name), ['quality', 'cheap-poor']);
+  assert.ok(ranked[0].smartScore > ranked[1].smartScore);
+  assert.equal(core.getCandidateRankingRule({ mode: 'smart', balanceMaxPrice: 0.1 }), '倍率 ≤ ×0.1 · 综合评分从高到低');
 });
 
 test('describes the active candidate ranking rule', () => {
@@ -511,6 +677,7 @@ test('normalizes the updated provider hall summary fields', () => {
         user_avg_ttft_ms: 4033.44,
         user_sample_count: 120,
         user_has_data: true,
+        output_tps: 87.5,
       }],
     },
   });
@@ -528,6 +695,7 @@ test('normalizes the updated provider hall summary fields', () => {
   assert.equal(summary.apis[0].responseValid, true);
   assert.equal(summary.apis[0].successRates['6h'], 0.29);
   assert.equal(summary.apis[0].userAverageTTFTMs, 4033.44);
+  assert.equal(summary.apis[0].outputTokensPerSecond, 87.5);
 });
 
 test('normalizes updated provider series while retaining legacy payload support', () => {
